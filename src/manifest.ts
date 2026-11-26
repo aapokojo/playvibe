@@ -1,4 +1,5 @@
-/* manifest.ts — the playvibe context manifest contract (step 6 seed).
+/* manifest.ts — the playvibe context manifest contract (step 6 seed;
+   GENERALIZATION STEP 1 landed: the net cfg taps below).
    The extracted TESTITILA agent surface is game-agnostic EXCEPT for the
    values typed here. A game integration MUST provide a manifest, and the
    manifest MUST name the game's agent-facing context file — initPlayvibe
@@ -8,7 +9,17 @@
    Provenance: typed from the blastbugs seam — the grep of src/testmode
    at source sha 8116fd28cb (app v45.65) found 3 game imports, 10 api
    routes, 2 storage keys, 1 workflow name, 4 env var names; every one
-   maps to exactly one field below. */
+   maps to exactly one field below.
+   Step 1 (funnel.ts imports -> cfg taps): the first game import pair
+   (../net + ../engine) is consumed. The funnel's three relay fetchers
+   now arrive through `net` — BLASTBUGS_MANIFEST ships as a seed WITHOUT
+   net (this repo has no game modules to point at); the game adds its
+   own net client at boot: initPlayvibe({ ...BLASTBUGS_MANIFEST, net:
+   { getRoom, getSnap, getLive } }). initPlayvibe stores the validated
+   manifest in src/cfg.ts, and package modules read their cfg through
+   pv() — no module in this package imports the consuming game. */
+
+import { setActiveManifest } from "./cfg";
 
 export interface PlayvibeRoutes {
   /** session JSON slices, idempotent store writes (POST {sid, part, total, data}) */
@@ -57,6 +68,44 @@ export interface PlayvibeStorePrefixes {
   brainState: string;
 }
 
+/* ---- GENERALIZATION STEP 1: the funnel's relay-fetcher cfg taps ----
+   Typed STRUCTURALLY from exactly what funnel.ts reads (nothing more):
+   a game's own net client satisfies these without adapters as long as
+   its room doc / snapshot / live envelope carry these fields — the
+   live packet's `lv` stays unknown (the wire's own contract; funnel
+   casts it to PlayvibeLivePacket at the read, the same cast pattern
+   the game-side funnel always used for getSnap). */
+export interface PlayvibeRoomDoc {
+  status?: string;
+  turnCount?: number;
+  w?: string;
+  st?: number;
+  rs?: number;
+  rem?: string;
+}
+export interface PlayvibeSnap {
+  turnCount: number;
+  phase: string | number;
+  timer?: number;
+  rs?: number;
+  activeBug?: unknown;
+}
+export interface PlayvibeLivePacket {
+  tc: number;
+  tf: number;
+  es?: number;
+  evs?: unknown[];
+}
+export interface PlayvibeLiveDoc {
+  pid: string;
+  lv: unknown;
+}
+export interface PlayvibeNet {
+  getRoom(code: string): Promise<PlayvibeRoomDoc | null>;
+  getSnap(code: string): Promise<unknown | null>;
+  getLive(code: string): Promise<PlayvibeLiveDoc | null>;
+}
+
 export interface PlayvibeManifest {
   /** human game name, e.g. "Blast Bugs" */
   game: string;
@@ -70,6 +119,9 @@ export interface PlayvibeManifest {
   storageKeys: PlayvibeStorageKeys;
   env: PlayvibeEnv;
   storePrefixes: PlayvibeStorePrefixes;
+  /** REQUIRED (step 1): the funnel's relay-fetcher taps — the game's own
+      net client functions; funnel.ts reads them through pv().net */
+  net: PlayvibeNet;
   /** REQUIRED: repo-root context file the brain reads for game rules,
       KORJAUKSET conventions and lane contracts. initPlayvibe throws
       without it — no context file, no agent. */
@@ -79,10 +131,16 @@ export interface PlayvibeManifest {
   version: string;
 }
 
+/* The manifest minus the net taps: this repo cannot point at game
+   modules, so the shipped game values are a SEED — the consuming game
+   adds its own net client at boot:
+   initPlayvibe({ ...BLASTBUGS_MANIFEST, net: { getRoom, getSnap, getLive } }). */
+export type PlayvibeManifestSeed = Omit<PlayvibeManifest, "net">;
+
 /* blastbugs' own values — the first consumer and the proof the seam is
    complete: every hardcoded string the snapshot grep found maps to
    exactly one field here. */
-export const BLASTBUGS_MANIFEST: PlayvibeManifest = {
+export const BLASTBUGS_MANIFEST: PlayvibeManifestSeed = {
   game: "Blast Bugs",
   repo: "aapokojo/blastbugs",
   workflowName: "blastbugs-brain",
@@ -102,7 +160,7 @@ export const BLASTBUGS_MANIFEST: PlayvibeManifest = {
   env: { agentToken: "BB_AGENT_TOKEN", githubToken: "BB_GITHUB_TOKEN", signKey: "BB_SIGN_KEY", debugPin: "BB_DEBUG_PIN" },
   storePrefixes: { session: "bbsess-", audio: "bbaud-", report: "bbreport-", brainState: "bbbrain-state-9a71f40c3dd2" },
   contextFile: "AGENT-CONTEXT.md",
-  version: "v45.65",
+  version: "v45.71",
 };
 
 /* init: the context file is not a nice-to-have. A game that ships the
@@ -120,10 +178,14 @@ export const initPlayvibe = (m: PlayvibeManifest): PlayvibeManifest => {
   if (!m.storageKeys.debugPin || !m.storageKeys.kickTok) missing.push("storageKeys");
   if (!m.env.agentToken || !m.env.signKey) missing.push("env");
   if (!m.storePrefixes.session || !m.storePrefixes.audio || !m.storePrefixes.brainState) missing.push("storePrefixes");
+  if (!m.net || typeof m.net.getRoom !== "function" || typeof m.net.getSnap !== "function" || typeof m.net.getLive !== "function") missing.push("net");
   if (missing.length) {
     throw new Error(
       `playvibe: manifest puuttuu kentät (${missing.join(", ")}) — kontekstitiedosto on pakollinen, agentti ei käynnisty ilman sitä`,
     );
   }
+  /* step 1: store the validated manifest as the package-wide cfg —
+     every game-specific read in the package goes through pv() */
+  setActiveManifest(m);
   return m;
 };

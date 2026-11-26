@@ -7,14 +7,17 @@ state line, JONO (analysis queue), KORJAUKSET (the full change ledger with
 PALAUTA), the agent question inbox and the reload gate — plus the manifest
 contract that binds it to any game.
 
-## Status (step 6 seed, 2026-11-26)
+## Status (step 1 landed, 2026-11-26)
 
 `src/testmode/` is a VERBATIM snapshot of blastbugs at sha `8116fd28cb`
-(app v45.65) — all 9 files byte-identical to the live game's module. The
-snapshot still imports blastbugs modules (`../net`, `../engine`,
-`../version`); nothing is generalized yet. This repo is the working home
-for the generalization. blastbugs keeps running its own copy until
-playvibe is proven, then consumes it as a package.
+(app v45.65), minus STEP 1: `funnel.ts` no longer imports the game
+(`../net`, `../engine` are gone) — its three relay fetchers arrive as
+cfg taps (`pv().net`, typed `PlayvibeNet` in `src/manifest.ts`), and
+`initPlayvibe` stores the validated manifest in the package-wide cfg
+holder (`src/cfg.ts`). The remaining game imports (`../version` in
+`TestPanel.tsx`) and the hardcoded `/api/*` routes + storage keys are
+steps 2-4. blastbugs keeps running its own copy until playvibe is
+proven, then consumes it as a package.
 
 Files: `types.ts` (session shape), `funnel.ts` (wire relay taps),
 `upload.ts` (sliced idempotent audio transport), `agent.ts`
@@ -39,9 +42,12 @@ exact failure mode this pipeline exists to prevent.
 
 ## Generalization plan (in order, each step proven live before the next)
 
-1. `funnel.ts`: the `../net` / `../engine` imports become cfg taps, exactly
-   like `useTestController`'s canvasRef/engRef/probeEvRef seams (the
-   proven pattern — controller already takes every game touch as cfg).
+1. DONE (2026-11-26): `funnel.ts`'s `../net` / `../engine` imports are
+   cfg taps — `pv().net` (`PlayvibeNet`), exactly like
+   `useTestController`'s canvasRef/engRef/probeEvRef seams (the proven
+   pattern — controller already takes every game touch as cfg).
+   `BLASTBUGS_MANIFEST` ships as a seed without `net` (this repo has no
+   game modules to point at); the game adds its own net client at boot.
 2. `TestPanel.tsx`: the `../version` import becomes a prop or manifest
    read (controller already receives `version` via cfg — one seam left).
 3. The 10 fetch routes, 2 storage keys and the workflow name migrate to
@@ -55,8 +61,10 @@ exact failure mode this pipeline exists to prevent.
 ## Integration plan
 
 blastbugs consumes playvibe as a package: `src/testmode` is deleted,
-imports point here, `initPlayvibe(BLASTBUGS_MANIFEST)` runs at test-mode
-boot. The context file is the non-negotiable init requirement.
+imports point here, `initPlayvibe({ ...BLASTBUGS_MANIFEST, net: {
+getRoom, getSnap, getLive } })` runs at test-mode boot (step 1 made
+`net` a required manifest field — the funnel's relay fetchers come from
+the game). The context file is the non-negotiable init requirement.
 
 ## House rules (from blastbugs, unchanged)
 
