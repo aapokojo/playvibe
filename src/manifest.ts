@@ -1,23 +1,19 @@
-/* manifest.ts — the playvibe context manifest contract (step 6 seed;
-   GENERALIZATION STEP 1 landed: the net cfg taps below).
-   The extracted TESTITILA agent surface is game-agnostic EXCEPT for the
-   values typed here. A game integration MUST provide a manifest, and the
-   manifest MUST name the game's agent-facing context file — initPlayvibe
-   refuses to boot the agent surface without it. No context file, no
-   agent: the whole point of playvibe is that the agent that fixes a game
-   also READS that game's own documented context.
-   Provenance: typed from the blastbugs seam — the grep of src/testmode
-   at source sha 8116fd28cb (app v45.65) found 3 game imports, 10 api
-   routes, 2 storage keys, 1 workflow name, 4 env var names; every one
-   maps to exactly one field below.
-   Step 1 (funnel.ts imports -> cfg taps): the first game import pair
-   (../net + ../engine) is consumed. The funnel's three relay fetchers
-   now arrive through `net` — BLASTBUGS_MANIFEST ships as a seed WITHOUT
-   net (this repo has no game modules to point at); the game adds its
-   own net client at boot: initPlayvibe({ ...BLASTBUGS_MANIFEST, net:
-   { getRoom, getSnap, getLive } }). initPlayvibe stores the validated
-   manifest in src/cfg.ts, and package modules read their cfg through
-   pv() — no module in this package imports the consuming game. */
+/* manifest.ts — the playvibe context manifest contract.
+   THE CLEAN CUT (the ownership rule): this package ships the CONTRACT,
+   the init validation and ONE neutral example — it deliberately carries
+   ZERO values of any real game. Every game-specific value lives in the
+   GAME's own repo (for the first integration: the game keeps its own
+   manifest module and passes it to initPlayvibe at test-mode boot).
+   The manifest MUST name the game's agent-facing context file —
+   initPlayvibe refuses to boot the agent surface without it. No
+   context file, no agent: the whole point of playvibe is that the agent
+   that fixes a game also READS that game's own documented context.
+   The field set was proven on the first real extraction (one game's
+   test surface had 3 module imports, 10 api routes, 2 storage keys,
+   1 workflow name, 4 env var names — every hardcoded game string
+   mapped to exactly one field below). initPlayvibe stores the
+   validated manifest in src/cfg.ts, and package modules read their cfg
+   through pv() — no module in this package imports the consuming game. */
 
 import { setActiveManifest } from "./cfg";
 
@@ -107,7 +103,7 @@ export interface PlayvibeNet {
 }
 
 export interface PlayvibeManifest {
-  /** human game name, e.g. "Blast Bugs" */
+  /** human game name */
   game: string;
   /** owner/repo of the GAME repo the agent fixes */
   repo: string;
@@ -131,36 +127,38 @@ export interface PlayvibeManifest {
   version: string;
 }
 
-/* The manifest minus the net taps: this repo cannot point at game
-   modules, so the shipped game values are a SEED — the consuming game
-   adds its own net client at boot:
-   initPlayvibe({ ...BLASTBUGS_MANIFEST, net: { getRoom, getSnap, getLive } }). */
+/* The manifest minus the net taps: a game's STATIC values can be
+   typed with this in the game's own repo and combined with its net
+   client at boot:
+   initPlayvibe({ ...GAME_MANIFEST, net: { getRoom, getSnap, getLive } }). */
 export type PlayvibeManifestSeed = Omit<PlayvibeManifest, "net">;
 
-/* blastbugs' own values — the first consumer and the proof the seam is
-   complete: every hardcoded string the snapshot grep found maps to
-   exactly one field here. */
-export const BLASTBUGS_MANIFEST: PlayvibeManifestSeed = {
-  game: "Blast Bugs",
-  repo: "aapokojo/blastbugs",
-  workflowName: "blastbugs-brain",
+/* EXAMPLE_MANIFEST: a neutral template — a plausible shape for a
+   FICTIONAL integration, wired to nothing. Games do not import this:
+   copy it into your game repo, replace every value, add your net taps
+   and pass the result to initPlayvibe at test-mode boot. If a real
+   game's values ever appear here, the clean cut is broken. */
+export const EXAMPLE_MANIFEST: PlayvibeManifestSeed = {
+  game: "Example Game",
+  repo: "you/example-game",
+  workflowName: "example-game-brain",
   apiBase: "",
   routes: {
-    session: "/api/session",
-    audio: "/api/audio",
-    transcribe: "/api/transcribe",
-    kick: "/api/kick",
-    agentqa: "/api/agentqa",
-    state: "/api/state",
-    fixes: "/api/fixes",
-    room: "/api/room",
-    debug: "/api/debug",
+    session: "/api/pv-session",
+    audio: "/api/pv-audio",
+    transcribe: "/api/pv-transcribe",
+    kick: "/api/pv-kick",
+    agentqa: "/api/pv-agentqa",
+    state: "/api/pv-state",
+    fixes: "/api/pv-fixes",
+    room: "/api/pv-room",
+    debug: "/api/pv-debug",
   },
-  storageKeys: { debugPin: "bb-debug-pin", kickTok: "bb-kick-tok" },
-  env: { agentToken: "BB_AGENT_TOKEN", githubToken: "BB_GITHUB_TOKEN", signKey: "BB_SIGN_KEY", debugPin: "BB_DEBUG_PIN" },
-  storePrefixes: { session: "bbsess-", audio: "bbaud-", report: "bbreport-", brainState: "bbbrain-state-9a71f40c3dd2" },
+  storageKeys: { debugPin: "pv-debug-pin", kickTok: "pv-kick-tok" },
+  env: { agentToken: "PV_AGENT_TOKEN", githubToken: "PV_GITHUB_TOKEN", signKey: "PV_SIGN_KEY", debugPin: "PV_DEBUG_PIN" },
+  storePrefixes: { session: "pvsess-", audio: "pvaud-", report: "pvreport-", brainState: "pvbrain-state-<unguessable-suffix>" },
   contextFile: "AGENT-CONTEXT.md",
-  version: "v45.71",
+  version: "v0.0.0",
 };
 
 /* init: the context file is not a nice-to-have. A game that ships the
