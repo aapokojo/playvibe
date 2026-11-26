@@ -1,14 +1,10 @@
-/* v45.39: test-mode controller - modularization step 2 of the playvibe
-   extraction. Everything in this file moved VERBATIM from src/App.tsx
-   (v45.38): the REC/STOP recorder lifecycle, the device-saves-nothing
-   outbox with its YRITÄ UUDELLEEN retry, throttled snapshot capture,
-   the session-JSON assembly with its sliced idempotent upload, and the
-   onstop mp3 transcode + audio upload lane. Only seams added: the game
-   taps (canvas / engine audio / probe funnel), the mode/room/version
-   stamps and the transcribed-sid callback arrive as cfg - the version
-   literal became cfg.version so src/App.tsx keeps all three brain-bump
-   spots. Behavior is identical to the inlined v45.38 code; the v35
-   recorder lineage comments stay as history. */
+/* test-mode controller: the REC/STOP recorder lifecycle, the
+   device-saves-nothing outbox with its YRITÄ UUDELLEEN retry, throttled
+   snapshot capture, the session-JSON assembly with its sliced idempotent
+   upload, and the onstop mp3 transcode + audio upload lane. Only seams:
+   the game taps (canvas / engine audio / probe funnel), the
+   mode/room/version stamps and the transcribed-sid callback arrive as
+   cfg - the version literal arrives as cfg.version from the game. */
 import { useEffect, useRef, useState } from "react";
 
 import { wireLog, setWireTap } from "./funnel";
@@ -43,10 +39,10 @@ export function useTestController(cfg: TestControllerCfg) {
     window.setTimeout(() => setTestStatus((cur) => (cur === msg ? "" : cur)), 15000);
   };
   const testSess = useRef<TestSess | null>(null);
-  /* v45.25: the device saves nothing, EVER (Aapo will not download audio
-     or logs locally). A failed upload parks itself in this in-memory
+  /* the device saves nothing, EVER (no local downloads of audio or
+     logs). A failed upload parks itself in this in-memory
      outbox instead of a download sheet; the panel shows a YRITÄ UUDELLEEN
-     button whose retry re-runs the same idempotent textdb writes. The
+     button whose retry re-runs the same idempotent store writes. The
      parked blobs live only until the page dies. */
   const outboxRef = useRef<{ kind: "json" | "audio"; sid: string; parts?: string[]; blob?: Blob; mime?: string }[]>([]);
   const [outboxN, setOutboxN] = useState(0);
@@ -151,11 +147,12 @@ export function useTestController(cfg: TestControllerCfg) {
       const engStream = engRef.current?.audioTap();
       if (engStream) s.mix.createMediaStreamSource(engStream).connect(dest);
       else s.noAudio = "engine-audio-off";
-      // v38: iOS Safari 26 claims audio/webm;codecs=opus support and records
+      // iOS Safari claims audio/webm;codecs=opus support and records
       // it, but its own decodeAudioData cannot decode opus-in-webm — the
-      // whole encode then falls back to a raw webm that chat uploads reject
-      // (first real-device Safari run). MP4/AAC is the container combo iOS
-      // can always decode in-page (proven by the v35 recorder), so on iOS
+      // whole encode then falls back to a raw webm that the analyzing
+      // agent rejects (first real-device Safari run). MP4/AAC is the
+      // container combo iOS can always decode in-page (proven by the
+      // original recorder), so on iOS
       // WebKit MP4 is preferred; everywhere else webm/opus stays first.
       const isIOSWebKit = /iP(?:hone|ad|od)/.test(navigator.userAgent);
       const mimes = isIOSWebKit
@@ -169,13 +166,13 @@ export function useTestController(cfg: TestControllerCfg) {
         };
         s.rec.onstop = () => {
           if (!s.chunks.length) return;
-          // v37: transcode to mp3 in-page (the chat that analyzes sessions
-          // accepts only mp3 among audio types). decodeAudioData sniffs the
-          // REAL container bytes, so Safari's possibly mislabeled blobs and
+          // transcode to mp3 in-page (the analyzing agent accepts only
+          // mp3 among audio types). decodeAudioData sniffs the REAL
+          // container bytes, so Safari's possibly mislabeled blobs and
           // Chrome's opus/webm all decode the same way; lamejs is a lazily
-          // imported chunk that never loads outside test mode. v43: on
-          // any failure the raw recording walks the same upload path;
-          // v45.25: a failed upload parks in the in-memory outbox for a
+          // imported chunk that never loads outside test mode. On any
+          // failure the raw recording walks the same upload path; a
+          // failed upload parks in the in-memory outbox for a
           // YRITÄ UUDELLEEN retry - the device saves nothing, ever, but a
           // session is never silently lost either.
           (async () => {
@@ -206,7 +203,7 @@ export function useTestController(cfg: TestControllerCfg) {
               for (let i = 0; i < pcm.length; i += CH) {
                 const b = enc.encodeBuffer(pcm.subarray(i, i + CH));
                 if (b.length) parts.push(new Uint8Array(b)); // copy: lame reuses its buffer
-                // v38: yield every ~9 s of encoded audio so the main thread
+                // yield every ~9 s of encoded audio so the main thread
                 // breathes — a long synchronous encode would freeze the page
                 // (and stall the session upload fetches) for its whole run
                 if ((i / CH) % 128 === 127) await new Promise((r) => setTimeout(r, 0));
@@ -214,8 +211,8 @@ export function useTestController(cfg: TestControllerCfg) {
               const tail = enc.flush();
               if (tail.length) parts.push(new Uint8Array(tail));
               const mp3 = new Blob(parts as unknown as BlobPart[], { type: "audio/mpeg" });
-              // v43: no device download — the narration rides the same
-              // sliced-upload path as the JSON (bbaud-<sid>* on the store)
+              // no device download — the narration rides the same
+              // sliced-upload path as the JSON (the store's audio parts)
               testStatusFlash(
                 `mp3 ✓ ${(mp3.size / 1e6).toFixed(1)} MB (${((performance.now() - t0) / 1000).toFixed(1)} s koodaus) — lähetetään…`,
               );
@@ -253,7 +250,7 @@ export function useTestController(cfg: TestControllerCfg) {
         s.rec.start(1000);
       } else s.noAudio = "no-supported-mime";
     } catch (e) {
-      // v38: Chrome on iOS denies getUserMedia at the platform level (the
+      // Chrome on iOS denies getUserMedia at the platform level (the
       // first real-device run recorded its whole session mic-less from
       // Chrome). Name it in-game and in the JSON meta so the browser —
       // not the code — is the visible explanation.
@@ -269,7 +266,7 @@ export function useTestController(cfg: TestControllerCfg) {
       s.stream = null;
     }
     if (s.noAudio) s.events.push({ ms: Math.round(performance.now() - s.startMs), at: new Date().toISOString(), t: "audio-note", reason: s.noAudio });
-    // v39: prewarm both STOP-time network deps NOW, minutes before they
+    // prewarm both STOP-time network deps NOW, minutes before they
     // are needed. The lamejs import is the mp3 encode's ONLY network hop:
     // once resolved it lives in the ES module cache and the encode runs
     // fully offline even if the network died mid-recording. The HEAD
@@ -285,7 +282,7 @@ export function useTestController(cfg: TestControllerCfg) {
     probeEvRef.current = (ev) => {
       s.events.push({ ms: Math.round(performance.now() - s.startMs), at: new Date().toISOString(), ...ev });
       if (ev.t === "boom" || ev.t === "turn" || ev.t === "load") testCapture(String(ev.t));
-      // v36: boom-instant frames catch the explosion before the stink
+      // boom-instant frames catch the explosion before the stink
       // cloud renders (first recorded session: all at-boom snapshots showed
       // no cloud); +1.5 s later the cloud is bright and citable
       if (ev.t === "boom") setTimeout(() => testCapture("boom+1.5s"), 1500);
@@ -301,7 +298,7 @@ export function useTestController(cfg: TestControllerCfg) {
   const endTest = async () => {
     const s = testSess.current;
     if (!s) return;
-    // v39: STOP is one-shot and its state capture is immediate (endTest now
+    // STOP is one-shot and its state capture is immediate (endTest
     // awaits the server upload below, so a second tap must be a no-op).
     testSess.current = null;
     setTestRec(false);
@@ -336,21 +333,20 @@ export function useTestController(cfg: TestControllerCfg) {
       ua: navigator.userAgent,
       screen: `${window.screen.width}x${window.screen.height}`,
       audioMime: s.mime,
-      audioMp3: true, // v37: onstop transcodes to mp3 unless it fell back to raw
+      audioMp3: true, // onstop transcodes to mp3 unless it fell back to raw
       noAudioReason: s.noAudio,
       events: s.events,
       wire: wireLog.map((w) => ({ ms: Math.round(w.ms - s.startMs), k: w.k, d: w.d })),
       snapshots: s.snaps,
     };
-    // v39 lineage: SERVER FIRST - the JSON pushes to textdb before anything
-    // else happens on the device, and a 45 s wall-clock deadline bounds the
+    // SERVER FIRST - the JSON pushes to the store before anything else
+    // happens on the device, and a 45 s wall-clock deadline bounds the
     // wait so a slow or dead network can never hold the session hostage.
-    // v45.25: after the budget (or any per-part failure) nothing is ever
+    // After the budget (or any per-part failure) nothing is ever
     // saved locally - the slices park in the in-memory outbox, the status
     // names the failed hop, and the YRITÄ UUDELLEEN button re-runs the
-    // idempotent writes when the network lets it. (The v42 upload-forensics
-    // block is gone with the local file it fed; the failing hop's error now
-    // names itself in the persistent outbox line instead.)
+    // idempotent writes when the network lets it. (The failing hop's
+    // error names itself in the persistent outbox line.)
     const sid = s.sid;
     const json = JSON.stringify(session);
     const SLICE = 40000;
@@ -363,8 +359,8 @@ export function useTestController(cfg: TestControllerCfg) {
         let last: Error = new Error("?");
         let ok = false;
         let att = 0;
-        // v38 lineage: per-part retries with backoff; parts are idempotent
-        // textdb writes, so retrying can never corrupt a session.
+        // per-part retries with backoff; parts are idempotent store
+        // writes, so retrying can never corrupt a session.
         for (; att < 4 && !ok; att++) {
           if (Date.now() > deadline) break;
           try {
@@ -405,28 +401,27 @@ export function useTestController(cfg: TestControllerCfg) {
     endTest,
   };
 }
-/* v44: the brain's public work-state doc (unguessable suffix is the gate,
-   same exposure class as the QA record). The brain (and /api/transcribe)
-   mirror their current job here as {sid, stage, note, ts}; TESTITILA
-   renders the stage live so autonomous work is visible in-game while
-   it runs instead of being invisible until a push lands. */
+/* the brain's public work-state doc (unguessable suffix is the gate,
+   same exposure class as the QA record). The brain (and the transcribe
+   route) mirror their current job here as {sid, stage, note, ts};
+   TESTITILA renders the stage live so autonomous work is visible
+   in-game while it runs instead of being invisible until a push
+   lands. */
 const BRAIN_STATE_URL = "/api/state";
 
-/* v45.19, fixed v45.56: does the brain's done-note name a version NEWER
-   than the one this device already runs? The running version is read from
-   the UI badge text (kept current by every version bump exactly where the
-   literals live), so no extra hand-synced constant can drift out of
-   date. Semantics: strictly newer -> offer the reload; equal (this
-   build already runs it) or OLDER (a stale note from an earlier run -
-   the state doc keeps the last note until the next kick) -> hide,
-   otherwise the button would linger on the very complaint this fixes.
-   v45.56: the gate used to ALSO require the note to start with
-   /^(korjaus live|push ok)/ — a prefix list that missed every other lane:
-   the brain's PALAUTA revert writes "palautus live (v45.54)" and chat
-   ships write "chat live (v45.56): ...", so v45.54 and v45.55 both
-   shipped with NO reload prompt. The note FORMAT is already the
-   contract — a parenthesized version — so the gate now only requires
-   the note to CONTAIN a (vN.N) version (any lane, no prefix list to
+/* does the brain's done-note name a version NEWER than the one this
+   device already runs? The running version is read from the UI badge
+   text (kept current by the game's version literal), so no extra
+   hand-synced constant can drift out of date. Semantics: strictly
+   newer -> offer the reload; equal (this build already runs it) or
+   OLDER (a stale note from an earlier run - the state doc keeps the
+   last note until the next kick) -> hide, otherwise the button would
+   linger on the very complaint this fixes. The gate used to ALSO
+   require a note PREFIX (korjaus live / push ok) — a prefix list that
+   missed every other lane: revert notes and chat-lane ship notes
+   both went without a reload prompt. The note FORMAT is already the
+   contract — a parenthesized version — so the gate only requires the
+   note to CONTAIN a (vN.N) version (any lane, no prefix list to
    maintain) and leaves the newer/equal/older logic below to decide. */
 const noteOffersNewVersion = (note: string, running: string): boolean => {
   const m = /\((v\d+(?:\.\d+)?)\)/.exec(note);
@@ -449,35 +444,33 @@ export interface TestAgentCfg {
   flash: (msg: string) => void;
 }
 
-/* v45.43: test-agent surface - modularization step 4 of the playvibe
-   extraction. Everything in this hook moved VERBATIM from src/App.tsx
-   (v45.42): the question-inbox state + answer handler, the live brain
-   work-state with the shadow ref its poll loop reads, the LATAA UUSI
-   VERSIO reload gate (the version check above), the ANALYSOI NYT kick
-   bookkeeping (sent record, parked-kick ref, last-kick stamp),
-   and the self-re-arming /api/agentqa + /api/state poll loop with its
-   visibility resume. Seams: the loop gate (testMode) and the toast
-   (flash, aliased to pushFlash so the moved code stays byte-verbatim)
-   arrive as cfg. App keeps the debug-code prompt and the parked-kick
-   auto-resume in its code-prompt handler, which read these same names
-   through the returned object - so the returned field set IS the App seam. */
+/* test-agent surface: the question-inbox state + answer handler, the
+   live brain work-state with the shadow ref its poll loop reads, the
+   LATAA UUSI VERSIO reload gate (the version check above), the
+   ANALYSOI NYT kick bookkeeping (sent record, parked-kick ref,
+   last-kick stamp), and the self-re-arming agentqa + state poll loop
+   with its visibility resume. Seams: the loop gate (testMode) and the
+   toast (flash) arrive as cfg. The game keeps the debug-code prompt
+   and the parked-kick auto-resume in its code-prompt handler, which
+   read these same names through the returned object - so the returned
+   field set IS the game seam. */
 export function useTestAgent(cfg: TestAgentCfg) {
   const { testMode, flash: pushFlash } = cfg;
-  /* ---- v42: agent question inbox ----
+  /* ---- agent question inbox ----
      Only the test-recorder panel polls this (test mode on): questions
-     arrive via /api/agentqa GET, answers POST back anonymously. The
-     brain (Vibe scheduled run, later the Studio agent) pings the
-     phone with /api/notify so a question is never missed. */
+     arrive via the agentqa route GET, answers POST back anonymously.
+     The brain pings the phone with /api/notify so a question is never
+     missed. */
   const [qaList, setQaList] = useState<{ id: string; text: string; opts: string[]; ts: number }[]>([]);
-  // v44: live brain work-state — rides the same 30 s tick as the QA inbox
+  // live brain work-state — rides the same 30 s tick as the QA inbox
   const [agentWork, setAgentWork] = useState<{ sid: string; stage: string; note: string; ts: number } | null>(null);
-  /* v45.18: shadow copies for the poll loop (the loop reads refs, so it
+  /* shadow copies for the poll loop (the loop reads refs, so it
      never re-subscribes to renders) + the version-badge ref behind the
      reload-button gate */
   const agentWorkRef = useRef<{ sid: string; stage: string; note: string; ts: number } | null>(null);
   const lastKickRef = useRef(0);
   const verBadgeRef = useRef<HTMLSpanElement | null>(null);
-  /* v45.18: LATAA UUSI VERSIO renders only when the brain's done-note
+  /* LATAA UUSI VERSIO renders only when the brain's done-note
      names a version this build is not already running (no lingering
      button after the reload; the poll rewrite below makes it appear
      without a restart) */
@@ -486,20 +479,21 @@ export function useTestAgent(cfg: TestAgentCfg) {
     agentWork.stage === "done" &&
     /\((v\d+(?:\.\d+)?)\)/.test(agentWork.note || "") &&
     noteOffersNewVersion(agentWork.note || "", verBadgeRef.current?.textContent || "");
-  // v45: the on-demand brain button needs the sid of the LAST session whose
+  // the on-demand brain button needs the sid of the LAST session whose
   // transcription succeeded (kickTranscribe sets it in its success path)
   const [kickSid, setKickSid] = useState("");
-  // v45.3: per-sid sent record — the button hides only while THIS session's
-  // analysis is on its way (the v45.2 `!agentWork` gate swallowed it entirely
-  // because the shared state doc is never empty once anything has run)
+  // per-sid sent record — the button hides only while THIS session's
+  // analysis is on its way (the old `!agentWork` gate swallowed it
+  // entirely because the shared state doc is never empty once anything
+  // has run)
   const [kickSent, setKickSent] = useState<Record<string, boolean>>({});
-  // v45.12: sid of a kick parked for the test-mode code (the prompt re-opens
+  // sid of a kick parked for the test-mode code (the prompt re-opens
   // when /api/kick answers 401 koodi puuttuu because a PWA restart cleared
   // the cached code; a correct code auto-resumes the parked kick)
   const kickAfterPinRef = useRef("");
 
   const qaAnswered = useRef<Set<string>>(new Set());
-  /* v45.18: the old bare 30 s setInterval proved unreliable on the iOS
+  /* the old bare 30 s setInterval proved unreliable on the iOS
      standalone PWA: while the app is backgrounded/locked during a brain
      run (kick, lock the phone, wait for the push — the main real-world
      flow), Safari can suspend the interval and never fire it again in
@@ -525,7 +519,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
             setQaList(j.questions.filter((q) => q && typeof q.id === "string" && !qaAnswered.current.has(q.id)).slice(0, 5));
           }
         }
-        // v44: brain work-state fetch (stage of the current job)
+        // brain work-state fetch (stage of the current job)
         const br = await fetch(BRAIN_STATE_URL, { cache: "no-store" }).catch(() => null);
         if (!stopped && br && br.ok) {
           const j2 = (await br.json().catch(() => null)) as

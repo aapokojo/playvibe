@@ -1,11 +1,8 @@
 import { useState } from "react";
 
-/* QAInput.tsx: v42 free-text answer input for one agent question — v45.36: moved verbatim out of src/App.tsx
-   (test-mode modularization, step 1 of the playvibe extraction: identical
-   behavior, new module home; back-reference: the App.tsx v35/v43/v45
-   history comments moved with the code). */
+/* QAInput.tsx: free-text answer input for one agent question. */
 
-/* v42: free-text input for one agent question (kept separate so each
+/* free-text input for one agent question (kept separate so each
    question owns its own tiny input state) */
 export const QAInput = ({ onSend }: { onSend: (v: string) => void }) => {
   const [v, setV] = useState("");

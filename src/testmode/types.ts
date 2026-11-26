@@ -1,7 +1,4 @@
-/* types.ts: the in-memory recording session shape (device saves nothing) — v45.36: moved verbatim out of src/App.tsx
-   (test-mode modularization, step 1 of the playvibe extraction: identical
-   behavior, new module home; back-reference: the App.tsx v35/v43/v45
-   history comments moved with the code). */
+/* types.ts: the in-memory recording session shape (device saves nothing). */
 
 export type TestSess = {
   startMs: number;

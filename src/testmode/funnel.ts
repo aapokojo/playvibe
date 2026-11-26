@@ -1,8 +1,5 @@
-/* funnel.ts: the v35 test-session relay funnel — v45.36: moved verbatim out of src/App.tsx
-   (test-mode modularization, step 1 of the playvibe extraction: identical
-   behavior, new module home; back-reference: the App.tsx v35/v43/v45
-   history comments moved with the code).
-   GENERALIZATION STEP 1 (this repo): the ../net and ../engine imports are
+/* funnel.ts: the test-session relay funnel.
+   GENERALIZATION STEP 1: the game-module imports are
    GONE. The three relay fetchers arrive as cfg taps through pv().net
    (PlayvibeNet in src/manifest.ts) — the same seam pattern
    useTestController already proved for canvasRef/engRef/probeEvRef. The
@@ -16,17 +13,17 @@
 import { pv } from "../cfg";
 import type { PlayvibeLivePacket, PlayvibeSnap } from "../manifest";
 
-/* ---- v35 test session (?test=1): wire funnel + wrapped relay lanes ----
+/* ---- test session (?test=1): wire funnel + wrapped relay lanes ----
    The recorder needs summaries of every relay packet this client observes
    (room docs, published snapshots, live batches, our own pushes). The
    funnel is a guarded array: zero cost in production builds, and these
-   wrappers are the ONLY net-surface change (net.ts itself stays untouched). */
+   wrappers are the ONLY net-surface change (the game's net module itself stays untouched). */
 export const TEST_URL = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("test");
 export const wireLog: { ms: number; k: string; d: Record<string, unknown> }[] = [];
 let wireTapOn = false;
-/* v45.36 export seam: ES module bindings are read-only to importers, so the
-   REC/STOP flips go through this setter (App.tsx used to assign the module
-   binding directly when everything lived in one file). */
+/* export seam: ES module bindings are read-only to importers, so the
+   REC/STOP flips go through this setter (importers cannot assign the
+   module binding directly). */
 export const setWireTap = (on: boolean) => {
   wireTapOn = on;
 };

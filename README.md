@@ -7,19 +7,22 @@ state line, JONO (analysis queue), KORJAUKSET (the full change ledger with
 PALAUTA), the agent question inbox and the reload gate — plus the manifest
 contract that binds it to any game.
 
-## Status (step 1 landed + clean cut done, 2026-11-26)
+## Status (step 1 + clean cut + comment pass landed, 2026-11-26)
 
-`src/testmode/` is a VERBATIM snapshot of blastbugs at sha `8116fd28cb`
+`src/testmode/` is a snapshot of blastbugs at sha `8116fd28cb`
 (app v45.65), minus STEP 1: `funnel.ts` no longer imports the game
 (`../net`, `../engine` are gone) — its three relay fetchers arrive as
 cfg taps (`pv().net`, typed `PlayvibeNet` in `src/manifest.ts`), and
 `initPlayvibe` stores the validated manifest in the package-wide cfg
-holder (`src/cfg.ts`). The remaining game imports (`../version` in
-`TestPanel.tsx`) and the hardcoded `/api/*` routes + storage keys are
-steps 2-4 — they are the verbatim snapshot's OWN leftovers and will be
-migrated to manifest reads; the package ships no real-game values
-(`EXAMPLE_MANIFEST` is fictional). blastbugs keeps running its own copy
-until playvibe is proven, then consumes it as a package.
+holder (`src/cfg.ts`). Since 0.4.0 the comments are neutralized too:
+every blastbugs version tag (vNN / v45.NN) and game-specific reference
+was rewritten to product-neutral wording — the technical rationale
+stays, the code is unchanged. The remaining game imports
+(`../version` in `TestPanel.tsx`) and the hardcoded `/api/*` routes +
+storage keys are steps 2-4 — they are the snapshot's OWN leftovers and
+will be migrated to manifest reads; the package ships no real-game
+values (`EXAMPLE_MANIFEST` is fictional). blastbugs keeps running its
+own copy until playvibe is proven, then consumes it as a package.
 
 Files: `types.ts` (session shape), `funnel.ts` (wire relay taps),
 `upload.ts` (sliced idempotent audio transport), `agent.ts`

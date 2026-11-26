@@ -1,4 +1,4 @@
-/* fixes.ts: v45.50 — the TESTITILA player-oversight surface transport:
+/* fixes.ts: the TESTITILA player-oversight surface transport:
    KORJAUKSET (past fixes + PALAUTA revert) and JONO (the analysis
    queue). The player — not the brain — is the reversal authority:
    an unsatisfactory fix is reverted from HERE (a deterministic,
@@ -7,7 +7,7 @@
    in flight at a time.
 
    Reads (poll every 30 s like the QA inbox) need no credential; the
-   mutations reuse the v45.16 kick credentials (/api/kick's game lane:
+   mutations reuse the same kick credentials (/api/kick's game lane:
    sessionStorage debug pin + localStorage kick token — the HMAC token
    /api/debug issues after a correct code; same 401 koodi re-ask flow
    as kickAnalysis, so the parked pin prompt auto-resumes). */
@@ -35,7 +35,7 @@ export type QueueItem = {
 export type QueueDoc = { running: { id: string; ts: number } | null; items: QueueItem[] };
 export type FixesData = { fixes: FixEntry[]; queue: QueueDoc };
 
-/* the same credential pair /api/kick checks (v45.16): the debug PIN is
+/* the same credential pair /api/kick checks: the debug PIN is
    session-scoped, the kick token is durable across PWA restarts */
 const creds = () => {
   let pin = "";
@@ -71,10 +71,10 @@ export const pollFixes = async (): Promise<FixesData | null> => {
     const j = (await r.json().catch(() => null)) as Partial<FixesData> | null;
     if (!j || !Array.isArray(j.fixes) || !j.queue || !Array.isArray(j.queue.items)) return null;
     return {
-      /* v45.57: the fixlog is ASCENDING (oldest first), so slice(0, 12)
-         kept the OLDEST 12 and the panel's newest visible row was v45.48
-         while the game ran v45.56. Keep the NEWEST 12 instead
-         (slice(-12)); the KORJAUKSET list reverses for display. */
+      /* the fixlog is ASCENDING (oldest first): slice(0, N) would keep
+         the OLDEST N and the newest ships would fall off the panel's
+         list. Keep the NEWEST N instead (slice(-N)); the KORJAUKSET
+         list reverses for display. */
       fixes: j.fixes.slice(-12),
       queue: { running: j.queue.running ?? null, items: j.queue.items.slice(0, 12) },
     };
@@ -116,7 +116,7 @@ export const queueAnalysis = async (
    brain executes it as a deterministic gated push (no model verdict):
    the stored edits invert, the pipeline bumps + verifies as usual.
    Only entries that carry their recorded edits are revertible — older
-   chat-era fixes display-only (their exact diffs were never stored). */
+   fixes display-only (their exact diffs were never stored). */
 export const requestRevert = async (fixId: string, flash: (m: string) => void): Promise<boolean> => {
   try {
     const r = await postFixes({ action: "revert", fixId, ...creds() });

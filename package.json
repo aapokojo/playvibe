@@ -1,6 +1,6 @@
 {
   "name": "playvibe",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Game-agnostic player-oversight agent surface (TESTITILA): narration recorder, wire funnel, analysis queue, KORJAUKSET ledger and agent inbox — extracted from Blast Bugs. Context manifest required at init.",

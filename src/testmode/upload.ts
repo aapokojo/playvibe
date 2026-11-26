@@ -1,9 +1,6 @@
-/* upload.ts: v43 sliced narration upload transport (device saves nothing) — v45.36: moved verbatim out of src/App.tsx
-   (test-mode modularization, step 1 of the playvibe extraction: identical
-   behavior, new module home; back-reference: the App.tsx v35/v43/v45
-   history comments moved with the code). */
+/* upload.ts: sliced narration upload transport (device saves nothing). */
 
-/* v43: Blob → base64 in one string. Only the fromCharCode call is
+/* Blob → base64 in one string. Only the fromCharCode call is
    chunked — spreading megabytes of byte args overflows the stack */
 export const blobB64 = async (b: Blob): Promise<string> => {
   const u = new Uint8Array(await b.arrayBuffer());
@@ -14,10 +11,11 @@ export const blobB64 = async (b: Blob): Promise<string> => {
   return btoa(out);
 };
 
-/* v43: the narration's half of the no-download funnel — mirrors the
-   JSON part loop exactly (40 KB base64 slices → /api/audio → textdb
-   bbaud-<sid>-<n>, index written last server-side). Idempotent textdb
-   writes make the 4 retry attempts with backoff safe; a 60 s wall
+/* the narration's half of the no-download funnel — mirrors the
+   JSON part loop exactly (40 KB base64 slices → the audio route → the
+   store's <prefix><sid>-<n> part docs, index written last server-side).
+   Idempotent store writes make the 4 retry attempts with backoff safe;
+   a 60 s wall
    clock bounds the wait. Returns the slice count. A 64-part cap
    (≈2.5 MB audio ≈ 5 min) protects the store budget; past it the
    audio uploads truncated, flagged so in the index. */

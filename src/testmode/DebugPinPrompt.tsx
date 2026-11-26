@@ -1,17 +1,14 @@
-/* DebugPinPrompt.tsx: v45.60 — modularization step 5 of the playvibe
-   extraction: the v45.7 test-mode code prompt overlay moved VERBATIM out of
-   src/App.tsx into this testmode component (identical JSX, classes and
-   behavior; App keeps the debugAsk/debugPin state and submitDebugPin —
-   they are the seam between the game UI's 5-tap version toggle, the
-   testmode agent bookkeeping and the recorder status line, so they stay
-   in App and arrive here as props, exactly like TestPanel's other seams).
+/* DebugPinPrompt.tsx: the test-mode code prompt overlay. The game keeps
+   the debugAsk/debugPin state and submitDebugPin — they are the seam
+   between the game UI's 5-tap version toggle, the testmode agent
+   bookkeeping and the recorder status line, so they stay in the game
+   and arrive here as props, exactly like TestPanel's other seams.
 
-   Back-reference (moved with the v45.7 code): the 5th tap no longer
-   flips test mode on directly; it asks for the test-mode code first
-   (/api/debug verifies it against the Vercel env BB_DEBUG_PIN, so the
-   code never ships in the bundle). The accepted code is cached in
-   sessionStorage and rides along every ANALYSOI NYT kick; localStorage
-   keeps only the on/off flag. */
+   The 5th tap does not flip test mode on directly; it asks for the
+   test-mode code first (/api/debug verifies it against the server's
+   debug-pin env var, so the code never ships in the bundle). The
+   accepted code is cached in sessionStorage and rides along every
+   ANALYSOI NYT kick; localStorage keeps only the on/off flag. */
 
 export const DebugPinPrompt = ({
   pin,

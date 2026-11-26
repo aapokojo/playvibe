@@ -1,73 +1,59 @@
-/* TestPanel.tsx: v45.42 — the TESTITILA debug panel, modularization
-   step 3 of the playvibe extraction. The whole panel JSX moved VERBATIM
-   out of src/App.tsx into this file: App keeps every piece of state the
-   panel reads (controller surface, inbox/work-state slices, the
-   reload/kick seams and the collapse/drag layout state — collapse state
-   stays in App so it survives a testMode flip, and the version-badge
-   ref stays there so noteOffersNewVersion keeps reading its own badge)
-   and passes it all as props; behavior is identical, no JSX text,
-   class or handler changed. The version-badge literal lives here now
-   (third brain-bump spot moved with the JSX).
-   v45.43 note: the agent-surface state this panel reads (question
-   inbox, live brain work-state, reload gate, kick bookkeeping) moved
-   into ./controller's useTestAgent; App forwards it through the same
-   props, so nothing below changed except the badge literal.
-   v45.50 note: KORJAUKSET (past fixes + PALAUTA) and JONO (analysis
-   queue) are LOCAL panel state via ./fixes with their own 30 s poll —
-   the controller poll and the App props stay byte-identical.
-   v45.51 note: player layout spec — AGENTTI + its contextual action
-   band (ANALYSOI NYT & co) on top with the task at hand; JONO under it
-   with the NEXT-UP row first; KORJAUKSET last, NEWEST ON TOP inside its
-   own ~2-3-row scrollable viewport. Also KÄSITELLÄÄN (v45.50 typo)
-   corrected to KÄSITTELLÄÄN.   v45.53 note: JONO shows WAITING items only — AGENTTI is the single
-   surface for ongoing brain work (processing row and done/failed
-   history removed from the queue).
-   v45.55 note (player spec): KORJAUKSET is the full change ledger —
-   every change to the app lists here, not just audio-loop brain fixes
-   (chat-lane and infrastructure ships are ledgered too, even without
-   stored edits — those display-only); PALAUTA is offered ONLY on the
-   newest revertable change, because older fixes may have other changes
-   built on top of them and reverting under those would clobber their
-   baseline (a clean revert of an older change would need bisecting
-   what depends on it).
-   v45.63 note (player report: a session recorded during a live fix
-   could not be added to JONO): ANALYSOI NYT used to hide while a brain
-   run was in flight (agentWork analyzing/fixing). That gate was a
-   leftover of the pre-queue direct-kick era, when a second kick would
-   collide with the running analysis. Since v45.50 enqueue is
-   QUEUE-BASED — adding a session while a run is in flight is exactly
-   what JONO exists for (the API defers the start). The busy gate made
-   a transcript recorded during a fix unreachable: the button never
-   appeared, so the session could not join the queue. The gate is gone;
-   the button still hides per-sid after a successful send (kickSent).
-   Moved with the code from App.tsx, still true:
-   v42.1: TESTITILA debug window — one panel, the whole agent surface:
-   REC (mic + engine audio + wire log + frames), STOP & upload-to-agent
-   status, the notification toggle (it serves only the agent loop, so it
-   lives here, not on the home screen), and the agent question inbox.
-   Toggled by 5 taps on the version number in the info screen; ?test=1
-   still works.
-   v42.2: anchored with safe-area insets — the first phone answer
-   reported the notch clipping the window's top-left corner in landscape
-   (viewport-fit=cover is set, so env() returns real insets; non-notched
-   devices fall back to +8px). v45.21: the vector bell, v45.22: the
-   vector +/- collapse glyphs, both for deterministic alignment in the
-   20x20 header boxes; STAGE_FI maps the brain's stage names into the
-   AGENTTI state line. Comments inside the JSX below are the original
-   ones from App.tsx. */
+/* TestPanel.tsx — the TESTITILA debug panel: one panel, the whole agent
+   surface. The host game keeps every piece of state the panel reads
+   (controller surface, inbox/work-state slices, the reload/kick seams
+   and the collapse/drag layout state — collapse state stays in the game
+   so it survives a testMode flip, and the version-badge ref stays there
+   so noteOffersNewVersion keeps reading its own badge) and passes it all
+   as props. The agent-surface state itself comes from ./controller's
+   useTestAgent; KORJAUKSET (past fixes + PALAUTA) and JONO (analysis
+   queue) are LOCAL panel state via ./fixes with their own 30 s poll.
+   Player-spec design notes:
+   - AGENTTI + its contextual action band (ANALYSOI NYT & co) on top
+     with the task at hand; JONO under it with the NEXT-UP row first;
+     KORJAUKSET last, NEWEST ON TOP inside its own ~2-3-row scrollable
+     viewport.
+   - JONO shows WAITING items only — AGENTTI is the single surface for
+     ongoing brain work (processing row and done/failed history removed
+     from the queue).
+   - KORJAUKSET is the full change ledger — every change to the game
+     lists here, not just brain fixes (chat-lane and infrastructure
+     ships are ledgered too, even without stored edits — those
+     display-only); PALAUTA is offered ONLY on the newest revertable
+     change, because older fixes may have other changes built on top of
+     them and reverting under those would clobber their baseline (a
+     clean revert of an older change would need bisecting what depends
+     on it).
+   - ANALYSOI NYT never hides for a busy brain: enqueue is QUEUE-BASED —
+     adding a session while a run is in flight is exactly what JONO
+     exists for (the API defers the start). The button hides only
+     per-sid after a successful send (kickSent).
+   - REC (mic + engine audio + wire log + frames), STOP &
+     upload-to-agent status, the notification toggle (it serves only the
+     agent loop, so it lives here, not on the home screen), and the
+     agent question inbox. Toggled by the host game (the reference game
+     uses 5 taps on the version number in the info screen; ?test=1 also
+     works).
+   - Anchored with safe-area insets — a phone answer reported the notch
+     clipping the window's top-left corner in landscape
+     (viewport-fit=cover is set, so env() returns real insets;
+     non-notched devices fall back to +8px). The vector bell and vector
+     +/- collapse glyphs are for deterministic alignment in the 20x20
+     header boxes; STAGE_FI maps the brain's stage names into the
+     AGENTTI state line. */
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 
-/* v45.50: the player-oversight surface (KORJAUKSET + JONO) transport —
-   a sibling of ./agent in the test lane; all of it stays local to the
-   panel, so the App prop surface is untouched. */
+/* the player-oversight surface (KORJAUKSET + JONO) transport — a
+   sibling of ./agent in the test lane; all of it stays local to the
+   panel, so the host game's prop surface is untouched. */
 import { dequeueItem, pollFixes, queueAnalysis, requestRevert, type FixesData } from "./fixes";
-/* v45.46: badge reads the single APP_VERSION constant (../version) —
-   the third brain-bump spot becomes an import, so it cannot go stale */
+/* badge reads the game's single APP_VERSION constant (../version) —
+   one version source, so it cannot go stale; generalization step 2
+   moves this to a manifest prop and drops the ../version import */
 import { APP_VERSION } from "../version";
 import { QAInput } from "./QAInput";
 
-/* v45.21: the emoji bell glyph overflows a tiny button on the phone
+/* the emoji bell glyph overflows a tiny button on the phone
    (clipped at the top, baseline off-center; emoji fonts differ per OS).
    A small vector bell scales deterministically inside a fixed-size
    button box, so the notification icon gets the SAME 20x20 flex box as
@@ -82,7 +68,7 @@ const BellIcon = ({ off }: { off?: boolean }) => (
     {off && <path d="M2.6 2.4 13.4 13.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />}
   </svg>
 );
-/* v45.22: vector +/- glyphs for the collapse toggle. Text glyphs ride
+/* vector +/- glyphs for the collapse toggle. Text glyphs ride
    on font baselines, and the en-dash sat oddly in its box on iOS; a
    pair of strokes matching the bell keeps the header visually even. */
 const PlusIcon = () => (
@@ -119,8 +105,8 @@ export interface TestPanelProps {
   retryUploads: () => Promise<void>;
   startTest: () => Promise<void>;
   endTest: () => Promise<void>;
-  /* agent work-state + question inbox (v45.43: the poll loop lives in
-     ./controller's useTestAgent; App only forwards these) */
+  /* agent work-state + question inbox (the poll loop lives in
+     ./controller's useTestAgent; the game only forwards these) */
   agentWork: { sid: string; stage: string; note: string; ts: number } | null;
   qaList: { id: string; text: string; opts: string[]; ts: number }[];
   qaAnswer: (id: string, choice: string) => Promise<void>;
@@ -130,7 +116,7 @@ export interface TestPanelProps {
   /* notification toggle (it serves the agent loop only) */
   pushOn: boolean;
   togglePush: () => Promise<void>;
-  /* ANALYSOI NYT + parked-kick seams (setDebugPin/setDebugAsk are App
+  /* ANALYSOI NYT + parked-kick seams (setDebugPin/setDebugAsk are game
      state because submitDebugPin's code path also drives them) */
   kickSid: string;
   kickSent: Record<string, boolean>;
@@ -139,7 +125,7 @@ export interface TestPanelProps {
   kickAfterPinRef: MutableRefObject<string>;
   setDebugPin: Dispatch<SetStateAction<string>>;
   setDebugAsk: Dispatch<SetStateAction<boolean>>;
-  /* collapse/drag layout state (stays in App: survives testMode flips,
+  /* collapse/drag layout state (stays in the game: survives testMode flips,
      and the drag handlers below write it through setTestPos) */
   testCollapsed: boolean;
   setTestCollapsed: Dispatch<SetStateAction<boolean>>;
@@ -182,9 +168,9 @@ export function TestPanel({
   testPanelRef,
   testDrag,
 }: TestPanelProps) {
-  /* v45.50: KORJAUKSET + JONO — local panel state with its own 30 s poll
+  /* KORJAUKSET + JONO — local panel state with its own 30 s poll
      (the controller's agent work-state/QA pipeline stays untouched, and
-     so does the App prop surface: everything below reads ./fixes).
+     so does the game's prop surface: everything below reads ./fixes).
      One queue, one brain run at a time; PALAUTA is a 2-tap confirm
      because a revert ships a real new version. */
   const [fx, setFx] = useState<FixesData | null>(null);
@@ -245,14 +231,14 @@ export function TestPanel({
               <span>TESTITILA</span>
               <span className="flex items-center gap-1">
                 <span ref={verBadgeRef} className="text-[#b08cd8]">{APP_VERSION}</span>
-                {/* v45.20: the notification toggle is a header icon
-                    (extended panel only) — the old full-width text band
-                    ate a whole row of the top band for one boolean
-                    v45.22: hover:-translate-y-0.5 removed from BOTH header
-                    buttons — iOS keeps the :hover state after a tap, so the
-                    touched button stayed shifted 2px up for good and the pair
-                    read as misaligned after every minimize/maximize (pixel
-                    measurement on the phone screenshot: box tops 2px
+                {/* the notification toggle is a header icon
+                    (extended panel only) — a full-width text band would
+                    eat a whole row of the top band for one boolean.
+                    hover:-translate-y-0.5 is on NEITHER header button —
+                    iOS keeps the :hover state after a tap, so the touched
+                    button would stay shifted 2px up for good and the pair
+                    would read as misaligned after every minimize/maximize
+                    (pixel measurement on a phone screenshot: box tops 2px
                     apart). active:scale-95 feeds back the press without
                     persisting; the +/- toggle glyphs are vectors now so
                     font baselines cannot offset them either. */}
@@ -278,7 +264,7 @@ export function TestPanel({
                 </button>
               </span>
             </div>
-            {/* v45.20: REC lives in the collapsed pill too — recording
+            {/* REC lives in the collapsed pill too — recording
                 must not need the full panel (the panel hides gameplay).
                 The pill stays compact: ● REC idle / ■ STOP while
                 recording, with the magenta REC marker so mid-game it is
@@ -328,15 +314,15 @@ export function TestPanel({
                 </button>
               </div>
             )}
-            {/* v45.14: panel layout per the player's spec — three bands:
+            {/* panel layout per the player's spec — three bands:
                 static controls on top (REC/STOP; notification toggle in
-                the header since v45.20),
+                the header),
                 live state in the middle (upload/transcribe/kick flashes, the
                 brain's stage, agent questions), transient actions at the
                 bottom that appear only when relevant */}
-            {/* v45.20: the notification toggle moved into the header as a
+            {/* the notification toggle lives in the header as a
                 🔔/🔕 icon — see the header row above */}
-            {/* v45.16: ONE state at a time in the agent band. The flash
+            {/* ONE state at a time in the agent band. The flash
                 line wins whenever it is the newest thing that happened
                 (it already self-clears after 15 s); otherwise the brain's
                 last known stage shows; otherwise the idle placeholder. The
@@ -367,16 +353,18 @@ export function TestPanel({
                 return <div className="mt-1 leading-snug text-[#b08cd8] opacity-60">ei aktiivista analyysiä</div>;
               })()}
             </div>
-            {/* v45.14: transient actions, contextual only — moved to the
-                TOP next to the AGENTTI state in v45.51 per the player
-                spec (the task at hand reads with its state line).
-                Original note:
-                ANALYSOI NYT while the transcript is ready but un-sent
-                (hidden right after a successful send and while a brain run
-                is in flight, the state line above carries the progress
-                instead); LATAA UUSI VERSIO only when the brain reports a
-                version actually on the server ("korjaus live"/"push ok"
-                notes; a gated or clean run leaves nothing to reload); v45.18: reloadReady additionally requires the note to name a version this build is not already running; v45.25: YRITÄ UUDELLEEN while failed uploads wait in the outbox (the device saves nothing, ever) v45.63 (player report): the pre-queue "hide while a brain run is in flight" gate is GONE — enqueue queues, it does not collide; the button hides only per-sid after a send. */}
+            {/* transient actions, contextual only — at the TOP next to the
+                AGENTTI state per the player spec (the task at hand reads
+                with its state line). ANALYSOI NYT while the transcript is
+                ready but un-sent (hidden right after a successful send);
+                LATAA UUSI VERSIO only when the brain reports a version
+                actually on the server, and reloadReady additionally
+                requires the note to name a version this build is not
+                already running (a gated or clean run leaves nothing to
+                reload); YRITÄ UUDELLEEN while failed uploads wait in the
+                outbox (the device saves nothing, ever). Enqueue queues
+                even mid-run — the pre-queue busy gate is gone; the
+                button hides only per-sid after a send. */}
             {reloadReady || outboxN > 0 || (kickSid && !kickSent[kickSid]) ? (
               <div className="mt-1.5 border-t border-[#8a3fd9]/50 pt-1">
                 {outboxN > 0 && (
@@ -426,14 +414,14 @@ export function TestPanel({
                 )}
               </div>
             ) : null}
-            {/* v45.50: JONO — the analysis queue: queue several narrated
+            {/* JONO — the analysis queue: queue several narrated
                 sessions; exactly one brain run is ever in flight.
-                v45.53 (player spec, after the 5fbq run): ONLY WAITING
-                ROWS render here — live brain-work updates belong to the
-                AGENTTI line alone (it reads the same state doc), and
-                the queue must not echo status in multiple places: no
-                KÄSITTELLÄÄN row (AGENTTI already carries the stage) and
-                no done/failed history (KORJAUKSET below is the record). */}
+                Player spec: ONLY WAITING ROWS render here — live
+                brain-work updates belong to the AGENTTI line alone (it
+                reads the same state doc), and the queue must not echo
+                status in multiple places: no KÄSITTELLÄÄN row (AGENTTI
+                already carries the stage) and no done/failed history
+                (KORJAUKSET below is the record). */}
             {fx && fx.queue.items.some((it) => it.status === "waiting") && (
               <div className="mt-1.5 border-t border-[#8a3fd9]/50 pt-1">
                 <div className="mb-1 font-bold text-[#00f0ff]">JONO</div>
@@ -459,16 +447,16 @@ export function TestPanel({
                   ))}
               </div>
             )}
-            {/* v45.50: KORJAUKSET — the player-oversight list of past fixes
+            {/* KORJAUKSET — the player-oversight list of past fixes
                 shipped by the brain/chat lanes. PALAUTA enqueues a
                 deterministic revert (2-tap confirm; it ships a real new
                 version). Entries without stored edits (older chat-era
                 ships) display only.
-                v45.51: NEWEST ON TOP (the freshest ships + their PALAUTA
+                NEWEST ON TOP (the freshest ships + their PALAUTA
                 buttons are what the player acts on), and the list
                 scrolls inside its own ~2-3-row viewport so it never
                 pushes AGENTTI/JONO off the panel.
-                v45.55 (player spec): PALAUTA is offered ONLY on the newest
+                Player spec: PALAUTA is offered ONLY on the newest
                 revertable change. An older fix may have other changes
                 built on top of it (brain fixes, chat fixes, panel/queue
                 work), and inverting its stored edits blindly could revert
@@ -480,7 +468,7 @@ export function TestPanel({
                 safe: nothing is built on it yet. Every entry still lists;
                 older ones display only. */}
             {fx && fx.fixes.length > 0 && (() => {
-              /* v45.55: PALAUTA only on the newest revertable change. The
+              /* PALAUTA only on the newest revertable change. The
                  fixes arrive ascending, so reversed = newest first; the
                  FIRST entry that is not reverted and has stored edits is
                  the only one a clean deterministic revert can target
@@ -498,11 +486,11 @@ export function TestPanel({
                       <div className="grow">
                         <span className="text-[#b08cd8]">[{f.version}]</span> {f.desc}
                         {f.reverted && <span className="opacity-60"> — palautettu</span>}
-                        {/* v45.59: revert ENTRIES carry a marker naming the
-                            fix they reversed — v45.54's desc ("palautus:
-                            Tiiminimet…") reads like the original v45.53
-                            change and made the player think PALAUTA sat on
-                            the wrong row. */}
+                        {/* revert ENTRIES carry a marker naming the fix
+                            they reversed — a plain "palautus: …" desc
+                            reads like the original change and made the
+                            player think PALAUTA sat on the wrong
+                            row. */}
                         {f.reverts && <span className="opacity-60"> ↩ kumosi {f.reverts}:n</span>}
                       </div>
                       {!f.reverted && i === newestRvIdx && (
@@ -559,7 +547,7 @@ export function TestPanel({
                 ))}
               </div>
             )}
-            {/* v45.12: the live work-state moved up into the AGENTTI section (one agent surface) */}
+            {/* the live work-state lives in the AGENTTI section (one agent surface) */}
               </>
             )}
           </div>
