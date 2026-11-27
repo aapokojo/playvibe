@@ -487,6 +487,15 @@ export function useTestAgent(cfg: TestAgentCfg) {
   // the on-demand brain button needs the sid of the LAST session whose
   // transcription succeeded (kickTranscribe sets it in its success path)
   const [kickSid, setKickSid] = useState("");
+  /* v0.8.1: shadow of kickSid for the poll loop (the effect closure must
+     see the CURRENT sid without re-subscribing on every transcription) —
+     kept in sync by the wrapper below, which the hook returns in place
+     of the raw setter */
+  const kickSidRef = useRef("");
+  const setKickSidTracked = (s: string) => {
+    kickSidRef.current = s;
+    setKickSid(s);
+  };
   // per-sid sent record — the button hides only while THIS session's
   // analysis is on its way (the old `!agentWork` gate swallowed it
   // entirely because the shared state doc is never empty once anything
@@ -539,8 +548,33 @@ export function useTestAgent(cfg: TestAgentCfg) {
               ts: typeof c.ts === "number" ? c.ts : 0,
               pushed: typeof c.pushed === "boolean" ? c.pushed : null,
             };
-            agentWorkRef.current = cur;
-            setAgentWork(cur);
+            /* v0.8.1 stale-state guard: between ANALYZE NOW and the new
+               run's first stage note, the shared state doc still holds the
+               PREVIOUS run's current entry, so the panel briefly rendered
+               the old run's completed state (first seen live: the phone
+               flashed the previous fix's done note while the new analysis
+               was still booting). Sid equality is the discriminator — it
+               is immune to phone/server clock skew, which a ts comparison
+               is not: after a kick, any doc whose sid is not the kicked
+               sid is the old run's leftover and becomes a neutral starting
+               placeholder until the new run's own stage note lands. The
+               10-minute window matches the kick cadence below and un-sticks
+               the placeholder if a run never writes anything. */
+            const kickedRecently =
+              lastKickRef.current > 0 &&
+              Date.now() - lastKickRef.current < 600000 &&
+              !!kickSidRef.current;
+            const shown: typeof cur = kickedRecently && cur.sid !== kickSidRef.current
+              ? {
+                  sid: kickSidRef.current,
+                  stage: "starting",
+                  note: "waiting for the brain's first stage note",
+                  ts: Date.now(),
+                  pushed: null,
+                }
+              : cur;
+            agentWorkRef.current = shown;
+            setAgentWork(shown);
           } else {
             agentWorkRef.current = null;
             setAgentWork(null);
@@ -554,7 +588,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
       if (stopped) return;
       const aw = agentWorkRef.current;
       const inFlight =
-        (!!aw && (aw.stage === "analyzing" || aw.stage === "fixing" || aw.stage === "waiting")) ||
+        (!!aw && (aw.stage === "analyzing" || aw.stage === "fixing" || aw.stage === "waiting" || aw.stage === "starting")) ||
         Date.now() - lastKickRef.current < 600000;
       timer = window.setTimeout(async () => {
         await poll();
@@ -602,7 +636,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
     reloadReady,
     verBadgeRef,
     kickSid,
-    setKickSid,
+    setKickSid: setKickSidTracked,
     kickSent,
     setKickSent,
     lastKickRef,

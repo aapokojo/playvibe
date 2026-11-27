@@ -28,7 +28,15 @@
    access: session/report/state/ledger reads and writes behind the
    agent token) and notify (the agent's result-push endpoint).
    Declaring them here means the brain builds EVERY URL it calls from
-   the served manifest — no game route is hardcoded in the brain. */
+   the served manifest — no game route is hardcoded in the brain.
+   v0.8.1: panel behavior only, no field change — the agent work-state
+   poll gained a stale-state guard. Between a kick and the new run's
+   first stage note the shared state doc still describes the PREVIOUS
+   run, so the panel briefly rendered the old run's completed state
+   (first seen live on a phone). The poll now replaces any doc whose
+   sid is not the kicked sid (within the 10-minute kick window) with
+   a neutral "analysis starting" placeholder; sid equality is immune
+   to phone/server clock skew, which a ts comparison is not. */
 
 import { setActiveManifest } from "./cfg";
 

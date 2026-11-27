@@ -268,3 +268,9 @@ every lane, no exceptions.
   result push). With them declared in the manifest the brain builds
   EVERY URL it calls from the served seed; no game route is
   hardcoded in the brain.
+- v0.8.1: the agent work-state poll's stale-state guard — after a
+  kick, a state doc still describing the PREVIOUS run (sid mismatch)
+  renders as a neutral "analysis starting" placeholder instead of
+  briefly flashing the old run's completed state. Sid equality, not
+  timestamp comparison, is the discriminator (clock-skew-proof);
+  panel behavior only, no manifest change.

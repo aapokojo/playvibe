@@ -81,6 +81,7 @@ const MinusIcon = () => (
 const STAGE_EN: Record<string, string> = {
   uploaded: "session received",
   transcribed: "transcription ready",
+  starting: "analysis starting",
   analyzing: "analysis running",
   fixing: "fix in progress",
   reverting: "revert in progress",
