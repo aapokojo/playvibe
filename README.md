@@ -29,9 +29,9 @@ The player-oversight loop for a game that is fixed by an autonomous agent:
    reverts the newest fix (2-tap confirm; it ships a real new version).
    The agent never reverses on its own.
 
-The player-facing surface is in English (the first integration's
-in-game copy stays Finnish until it consumes this package); the
-contracts below are language-neutral.
+The player-facing surface is in English (the first integration's own
+game copy stays Finnish; its test panel now ships this package's
+English UI); the contracts below are language-neutral.
 
 ## Technology
 
@@ -134,10 +134,14 @@ initPlayvibe({ ...GAME_MANIFEST, net: { getRoom, getSnap, getLive } });
 ```
 
 `initPlayvibe` validates the manifest and throws if anything required is
-missing. The context file is not a nice-to-have: no context file, no
-agent, because an agent that fixes a game without reading that game's
-documented context is the exact failure mode this pipeline exists to
-prevent.
+missing. If the tapped fetchers also run OUTSIDE test mode (for example
+your net client uses them in normal online play), call `initPlayvibe`
+at module load instead of at test-mode boot: `pv()` throws until the
+manifest is initialized, and the taps must never run uninitialized.
+That is how the first integration booted it. The context file is not a
+nice-to-have: no context file, no agent, because an agent that fixes a
+game without reading that game's documented context is the exact
+failure mode this pipeline exists to prevent.
 
 ### 4. Wire the hooks and mount the panel
 
@@ -228,11 +232,11 @@ every lane, no exceptions.
   VERSION, all state lines, titles and error strings); the one Finnish
   string kept is the reference brain's done-note prefix check
   ("korjausta ei pushattu"), a data contract, not UI text.
-- Generalization steps 1-3 are DONE: the funnel reads the game's net
-  taps, every fetch site builds its URL from the manifest
-  (`apiBase` + route via `pvRoute`), the two storage keys and the badge
-  version read from the manifest, and the package imports no game
-  module.
+- The package is game-agnostic through and through: no game name,
+  route, storage key or version is hardcoded anywhere. The net taps are
+  injected at boot, every fetch URL is built from the manifest
+  (`apiBase` + route), the storage keys and the badge version come
+  from the manifest, and no file imports anything from the host game.
 - `tsconfig.json` ships with the package: in a checkout run
   `npm install typescript react react-dom @types/react @types/react-dom`
   then `npm run typecheck` to verify (strict, no emit).
