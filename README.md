@@ -79,7 +79,7 @@ the same routes; the panel, the queue and the ledger do not change.
   the shapes match).
 - **Recorder seams**: the game canvas (screenshots), the engine's audio
   bus (`audioTap()`), and an engine event probe.
-- **The nine server routes** listed below, plus their env vars.
+- **The eleven server routes** listed below, plus their env vars.
 - **A brain**: a deployed agent workflow (name goes in the manifest;
   see The brain provider) and the game's repo-root `AGENT-CONTEXT.md`,
   the context document the brain reads for game rules, conventions and
@@ -117,7 +117,7 @@ export const GAME_MANIFEST: PlayvibeManifestSeed = {
   repo: "me/my-game",
   workflowName: "my-game-brain",
   apiBase: "",                 // "" = same-origin
-  routes: { session: "/api/session", audio: "/api/audio", /* ... 9 total */ },
+  routes: { session: "/api/session", audio: "/api/audio", /* ... 11 total */ },
   storageKeys: { debugPin: "mygame-debug-pin", kickTok: "mygame-kick-tok" },
   env: { agentToken: "MYGAME_AGENT_TOKEN", githubToken: "MYGAME_GITHUB_TOKEN",
          signKey: "MYGAME_SIGN_KEY", debugPin: "MYGAME_DEBUG_PIN" },
@@ -207,6 +207,8 @@ and route engine events through the `probeEvRef` tap. `TEST_URL` is a
 | `state` | GET | `{current: {sid, stage, note, ts, pushed?}}` | stages: uploaded, transcribed, analyzing, fixing, reverting, waiting, done; `pushed` (v0.7.0): true/false when a brain run's own fix landed or was gate-refused |
 | `fixes` | GET/POST | GET `{fixes[], queue}`; POST `{action: "enqueue"\|"revert"\|"dequeue", ...}` | reads are credential-free; mutations use the kick credentials; fixes arrive ascending |
 | `room` | HEAD | - | origin prewarm so the STOP-time upload never fires on a cold, hours-dormant path |
+| `broker` | POST | `{token, action:"get"\|"put"\|"del"\|"exists", key, value?}` | the agent-token-guarded store: the brain's ONLY store access (session/report/state/ledger docs). Brain-facing; the panel never calls it |
+| `notify` | POST | `{token, title, body, url, tag}` | the brain's result-push endpoint (tag from the manifest's `brain.notifyTag`). Brain-facing; the panel never calls it |
 
 Env vars the server needs (names come from your manifest): the agent
 token (gates notify + qa ask/consume), the GitHub token (the brain's
@@ -235,7 +237,7 @@ every lane, no exceptions.
 - Server first: the session JSON is on the server before anything else
   happens, bounded by a wall-clock deadline.
 
-## Current state (0.7.0)
+## Current state (0.8.0)
 
 - The player-facing UI is fully English (section names AGENT /
   QUEUE / FIXES, buttons ANALYZE NOW / REVERT / RETRY / LOAD NEW
@@ -260,3 +262,9 @@ every lane, no exceptions.
   fetches it at run start, so a brain deployment carries zero game
   values beyond its one bootstrap origin. A second brain implements
   the same provider-neutral contract against the same route.
+- `routes.broker` + `routes.notify` (v0.8.0): two brain-facing lanes
+  the panel does not call — the broker (the agent-token-guarded
+  store: the brain's only store access) and notify (the brain's
+  result push). With them declared in the manifest the brain builds
+  EVERY URL it calls from the served seed; no game route is
+  hardcoded in the brain.

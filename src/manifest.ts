@@ -6,12 +6,12 @@
    manifest module and passes it to initPlayvibe at test-mode boot).
    The manifest MUST name the game's agent-facing context file —
    initPlayvibe refuses to boot the agent surface without it. No
-   context file, no agent: the whole point of playvibe is that the agent
-   that fixes a game also READS that game's own documented context.
-   The field set was proven on the first real extraction (one game's
-   test surface had 3 module imports, 10 api routes, 2 storage keys,
-   1 workflow name, 4 env var names — every hardcoded game string
-   mapped to exactly one field below). initPlayvibe stores the
+   context file, no agent: the whole point of playvibe is that the
+   agent that fixes a game also READS that game's own documented
+   context. The field set was proven on the first real extraction (one
+   game's test surface had 3 module imports, 10 api routes, 2 storage
+   keys, 1 workflow name, 4 env var names — every hardcoded game
+   string mapped to exactly one field below). initPlayvibe stores the
    validated manifest in src/cfg.ts, and package modules read their cfg
    through pv() — no module in this package imports the consuming game.
    v0.7.0: the manifest is ALSO the brain's per-game configuration.
@@ -22,7 +22,13 @@
    structured from this version on: the brain writes `pushed`
    (true/false) into its state doc's current job and the panel reads
    the flag; the legacy Finnish note prefix is only a fallback while a
-   pre-v4.10 brain is still deployed. */
+   pre-v4.10 brain is still deployed.
+   v0.8.0: routes.broker + routes.notify. Two lanes the PANEL does not
+   consume but the brain does: the broker (the agent's only store
+   access: session/report/state/ledger reads and writes behind the
+   agent token) and notify (the agent's result-push endpoint).
+   Declaring them here means the brain builds EVERY URL it calls from
+   the served manifest — no game route is hardcoded in the brain. */
 
 import { setActiveManifest } from "./cfg";
 
@@ -45,6 +51,13 @@ export interface PlayvibeRoutes {
   room: string;
   /** test-mode code verification, HMAC kick token issuer (POST) */
   debug: string;
+  /** v0.8.0: the agent-token-guarded store broker — the brain's ONLY
+      store access (session/report/state/ledger docs). Brain-facing;
+      the panel never calls it */
+  broker: string;
+  /** v0.8.0: the brain's result-push endpoint (POST {token, title,
+      body, url, tag}). Brain-facing; the panel never calls it */
+  notify: string;
 }
 
 export interface PlayvibeStorageKeys {
@@ -78,7 +91,8 @@ export interface PlayvibeBrain {
   /** absolute origin the brain reaches the game's API at (the brain
       runs in the cloud; same-origin "" is meaningless there) */
   origin: string;
-  /** the brain's ONLY editable file (the game's app lane) */
+  /** the brain's ONLY editable file (the game's app lane); its BASENAME
+      is the label the whole pipeline speaks (gates, prompts, commits) */
   appPath: string;
   /** the file holding the single version literal the pipeline bumps */
   versionPath: string;
@@ -89,10 +103,14 @@ export interface PlayvibeBrain {
   /** push-notification tag for the notify lane */
   notifyTag: string;
   /** version bump convention the pipeline applies; "vNN-patch":
-      v45 -> v45.1 -> v45.2 */
+      v45 -> v45.1 -> v45.2 (the only scheme the brain implements
+      today — it validates the declared value and fails named on
+      anything else rather than bumping wrong) */
   versionScheme: "vNN-patch";
   /** live-verify convention; "bundle-filename": the hashed bundle
-      filename change on the origin (the Vite/Vercel shape) */
+      filename change on the origin (the only shape the brain
+      implements today — the Vite/Vercel asset pattern; validated,
+      fails named on anything else) */
   liveVerify: "bundle-filename";
 }
 
@@ -203,6 +221,8 @@ export const EXAMPLE_MANIFEST: PlayvibeManifestSeed = {
     fixes: "/api/pv-fixes",
     room: "/api/pv-room",
     debug: "/api/pv-debug",
+    broker: "/api/pv-broker",
+    notify: "/api/pv-notify",
   },
   storageKeys: { debugPin: "pv-debug-pin", kickTok: "pv-kick-tok" },
   env: { agentToken: "PV_AGENT_TOKEN", githubToken: "PV_GITHUB_TOKEN", signKey: "PV_SIGN_KEY", debugPin: "PV_DEBUG_PIN" },
@@ -231,7 +251,7 @@ export const initPlayvibe = (m: PlayvibeManifest): PlayvibeManifest => {
   if (!m.repo) missing.push("repo");
   if (!m.workflowName) missing.push("workflowName");
   if (!m.contextFile) missing.push("contextFile");
-  if (!m.routes.session || !m.routes.audio || !m.routes.transcribe || !m.routes.kick || !m.routes.agentqa || !m.routes.state || !m.routes.fixes || !m.routes.room || !m.routes.debug) {
+  if (!m.routes.session || !m.routes.audio || !m.routes.transcribe || !m.routes.kick || !m.routes.agentqa || !m.routes.state || !m.routes.fixes || !m.routes.room || !m.routes.debug || !m.routes.broker || !m.routes.notify) {
     missing.push("routes");
   }
   if (!m.storageKeys.debugPin || !m.storageKeys.kickTok) missing.push("storageKeys");
