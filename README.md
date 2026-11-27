@@ -70,7 +70,10 @@ the same routes; the panel, the queue and the ledger do not change.
 
 - **A manifest**: every game-specific value (API routes, storage key
   names, server env var names, store prefixes, workflow name, context
-  file name) lives in the GAME's repo, not in this package.
+  file name, brain configuration, analysis vocabulary) lives in the
+  GAME's repo, not in this package. The game also serves the manifest
+  seed at GET /api/manifest for the brain (names and paths only, no
+  secret values, so the route needs no credential).
 - **Three net taps**: `getRoom`, `getSnap`, `getLive` from the game's own
   net client (typed structurally in `PlayvibeNet`; no adapters needed if
   the shapes match).
@@ -122,6 +125,11 @@ export const GAME_MANIFEST: PlayvibeManifestSeed = {
                    brainState: "mybrain-state-<unguessable-suffix>" },
   contextFile: "AGENT-CONTEXT.md",
   version: APP_VERSION,
+  brain: { origin: "https://my-game.example", appPath: "src/App.tsx",
+           versionPath: "src/version.ts", readOnlyPaths: [],
+           fixlogKey: "myfixlog", notifyTag: "my-analysis",
+           versionScheme: "vNN-patch", liveVerify: "bundle-filename" },
+  analysis: { keyEvents: ["levelup"], heartbeat: ["push-live"] },
 };
 ```
 
@@ -196,7 +204,7 @@ and route engine events through the `probeEvRef` tap. `TEST_URL` is a
 | `kick` | POST | `{sid, pin, kick}` | two credential lanes: game lane (session debug pin or durable HMAC kick token) or agent lane (server token); starts ONE brain run; 401 with the server's missing- or wrong-code message |
 | `debug` | POST | the test-mode code | verifies against the server's debug-pin env var, issues the durable kick token; the code never ships in the bundle |
 | `agentqa` | GET/POST | GET `{questions[]}`; POST `{action:"answer", id, choice}` | player answers are anonymous; ask/consume need the agent token |
-| `state` | GET | `{current: {sid, stage, note, ts}}` | stages: uploaded, transcribed, analyzing, fixing, reverting, waiting, done |
+| `state` | GET | `{current: {sid, stage, note, ts, pushed?}}` | stages: uploaded, transcribed, analyzing, fixing, reverting, waiting, done; `pushed` (v0.7.0): true/false when a brain run's own fix landed or was gate-refused |
 | `fixes` | GET/POST | GET `{fixes[], queue}`; POST `{action: "enqueue"\|"revert"\|"dequeue", ...}` | reads are credential-free; mutations use the kick credentials; fixes arrive ascending |
 | `room` | HEAD | - | origin prewarm so the STOP-time upload never fires on a cold, hours-dormant path |
 
@@ -206,10 +214,12 @@ push lane), the signing key (signed writes) and the debug pin.
 
 ### 7. Deploy the brain and write your context file
 
-Deploy the brain workflow (name matches `workflowName`; today that is
-a Mistral workflow deployment, see The brain provider); it fetches
-the session JSON + transcript from your store by sid and follows the
-rules in your `AGENT-CONTEXT.md`. The panel renders its progress from
+Serve the manifest seed at GET /api/manifest (serialize the same
+module you pass to initPlayvibe). Deploy the brain workflow (name
+matches `workflowName`; today that is a Mistral workflow deployment,
+see The brain provider); it fetches your manifest from that route at
+run start, then the session JSON + transcript from your store by sid,
+and follows the rules in your `AGENT-CONTEXT.md`. The panel renders its progress from
 the `state` doc and its shipped fixes land in FIXES through the
 `fixes` route. Keep the ledger rule in your context file: every change,
 every lane, no exceptions.
@@ -225,13 +235,15 @@ every lane, no exceptions.
 - Server first: the session JSON is on the server before anything else
   happens, bounded by a wall-clock deadline.
 
-## Current state (0.6.0)
+## Current state (0.7.0)
 
 - The player-facing UI is fully English (section names AGENT /
   QUEUE / FIXES, buttons ANALYZE NOW / REVERT / RETRY / LOAD NEW
-  VERSION, all state lines, titles and error strings); the one Finnish
-  string kept is the reference brain's done-note prefix check
-  ("korjausta ei pushattu"), a data contract, not UI text.
+  VERSION, all state lines, titles and error strings). The one Finnish
+  string kept is a legacy FALLBACK for the done-note contract
+  ("korjausta ei pushattu"): from v0.7.0 the brain's state doc carries
+  a structured `pushed` flag the panel reads instead, and the prefix
+  check only covers a pre-v4.10 brain still being deployed.
 - The package is game-agnostic through and through: no game name,
   route, storage key or version is hardcoded anywhere. The net taps are
   injected at boot, every fetch URL is built from the manifest
@@ -240,6 +252,11 @@ every lane, no exceptions.
 - `tsconfig.json` ships with the package: in a checkout run
   `npm install typescript react react-dom @types/react @types/react-dom`
   then `npm run typecheck` to verify (strict, no emit).
-- The brain's per-game configuration (repo, tokens, version bump
-  scheme, live verify) still lives inside the brain deployment itself;
-  its provider-neutral contract is what a second brain implements.
+- The brain's per-game configuration travels IN THE MANIFEST (v0.7.0):
+  the `brain` section (origin, editable + version file paths, fixlog
+  key, notify tag, version bump scheme, live-verify shape) and the
+  `analysis` vocabulary (key events + heartbeat kinds). The game
+  serves the manifest seed at GET {origin}/api/manifest and the brain
+  fetches it at run start, so a brain deployment carries zero game
+  values beyond its one bootstrap origin. A second brain implements
+  the same provider-neutral contract against the same route.

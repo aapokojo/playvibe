@@ -104,7 +104,7 @@ export interface TestPanelProps {
   endTest: () => Promise<void>;
   /* agent work-state + question inbox (the poll loop lives in
      ./controller's useTestAgent; the game only forwards these) */
-  agentWork: { sid: string; stage: string; note: string; ts: number } | null;
+  agentWork: { sid: string; stage: string; note: string; ts: number; pushed?: boolean | null } | null;
   qaList: { id: string; text: string; opts: string[]; ts: number }[];
   qaAnswer: (id: string, choice: string) => Promise<void>;
   /* LOAD NEW VERSION gate; verBadgeRef spans the badge below */
@@ -341,11 +341,19 @@ export function TestPanel({
                     <div className="mt-1 break-words leading-snug text-[#b08cd8]">
                       {(() => {
                         const note = agentWork.note || "";
-                        if (agentWork.stage === "done" && note.startsWith("korjausta ei pushattu")) {
-                          /* the reference brain's done-note contract: this prefix
-                             means its own fix was gate-refused; the note text after
-                             the colon says why, and the chat lane handles the fix */
-                          return `analysis done — the brain's own fix did not land (${note.slice("korjausta ei pushattu:".length).trim()}); the chat lane will handle it`;
+                        /* the brain's done-note contract (v0.7.0): the structured
+                           `pushed` flag in the state doc says whether its own fix
+                           landed (false = gate-refused); the legacy Finnish prefix
+                           stays as the fallback while a pre-v4.10 brain is still
+                           deployed. The note text says why either way, and the
+                           chat lane handles the fix. */
+                        if (
+                          agentWork.stage === "done" &&
+                          (agentWork.pushed === false ||
+                            (agentWork.pushed == null && note.startsWith("korjausta ei pushattu")))
+                        ) {
+                          const why = agentWork.pushed === false ? note.trim() : note.slice("korjausta ei pushattu:".length).trim();
+                          return `analysis done — the brain's own fix did not land (${why}); the chat lane will handle it`;
                         }
                         return `${STAGE_EN[agentWork.stage] ?? agentWork.stage}${note ? ` — ${note}` : ""}`;
                       })()}

@@ -13,7 +13,16 @@
    1 workflow name, 4 env var names — every hardcoded game string
    mapped to exactly one field below). initPlayvibe stores the
    validated manifest in src/cfg.ts, and package modules read their cfg
-   through pv() — no module in this package imports the consuming game. */
+   through pv() — no module in this package imports the consuming game.
+   v0.7.0: the manifest is ALSO the brain's per-game configuration.
+   The game serves its static seed at GET {origin}/api/manifest (the
+   net taps are runtime objects and never serialize); the brain fetches
+   that route at run start, so a brain deployment carries zero game
+   values beyond its one bootstrap origin. The done-note contract is
+   structured from this version on: the brain writes `pushed`
+   (true/false) into its state doc's current job and the panel reads
+   the flag; the legacy Finnish note prefix is only a fallback while a
+   pre-v4.10 brain is still deployed. */
 
 import { setActiveManifest } from "./cfg";
 
@@ -62,6 +71,38 @@ export interface PlayvibeStorePrefixes {
   report: string;
   /** brain public work-state doc (unguessable suffix = the gate) */
   brainState: string;
+}
+
+/* ---- v0.7.0: the brain section + the analysis vocabulary ---- */
+export interface PlayvibeBrain {
+  /** absolute origin the brain reaches the game's API at (the brain
+      runs in the cloud; same-origin "" is meaningless there) */
+  origin: string;
+  /** the brain's ONLY editable file (the game's app lane) */
+  appPath: string;
+  /** the file holding the single version literal the pipeline bumps */
+  versionPath: string;
+  /** extra read-only files fetched for prompt context (may be empty) */
+  readOnlyPaths: string[];
+  /** the change-ledger store key (broker) */
+  fixlogKey: string;
+  /** push-notification tag for the notify lane */
+  notifyTag: string;
+  /** version bump convention the pipeline applies; "vNN-patch":
+      v45 -> v45.1 -> v45.2 */
+  versionScheme: "vNN-patch";
+  /** live-verify convention; "bundle-filename": the hashed bundle
+      filename change on the origin (the Vite/Vercel shape) */
+  liveVerify: "bundle-filename";
+}
+
+export interface PlayvibeAnalysis {
+  /** the game's key events: counted, and each is expected to pair
+      with a +1.5 s snapshot frame (the first game: ["boom"]) */
+  keyEvents: string[];
+  /** wire packet kinds whose cadence is stall-checked (the owning
+      client's live-state stream; gaps > 2 s = relay stall) */
+  heartbeat: string[];
 }
 
 /* ---- GENERALIZATION STEP 1: the funnel's relay-fetcher cfg taps ----
@@ -126,6 +167,12 @@ export interface PlayvibeManifest {
   /** running app version (badge + reload gate); at integration this
       value comes from the game's own version module */
   version: string;
+  /** v0.7.0: the brain's per-game configuration — everything the
+      analysis pipeline needs except its one bootstrap origin */
+  brain: PlayvibeBrain;
+  /** v0.7.0: the game's event/wire vocabulary for the deterministic
+      session analysis (key events + heartbeat kinds) */
+  analysis: PlayvibeAnalysis;
 }
 
 /* The manifest minus the net taps: a game's STATIC values can be
@@ -160,6 +207,17 @@ export const EXAMPLE_MANIFEST: PlayvibeManifestSeed = {
   storePrefixes: { session: "pvsess-", audio: "pvaud-", report: "pvreport-", brainState: "pvbrain-state-<unguessable-suffix>" },
   contextFile: "AGENT-CONTEXT.md",
   version: "v0.0.0",
+  brain: {
+    origin: "https://example-game.vercel.app",
+    appPath: "src/App.tsx",
+    versionPath: "src/version.ts",
+    readOnlyPaths: [],
+    fixlogKey: "pvfixlog",
+    notifyTag: "pv-analysis",
+    versionScheme: "vNN-patch",
+    liveVerify: "bundle-filename",
+  },
+  analysis: { keyEvents: ["levelup"], heartbeat: ["push-live"] },
 };
 
 /* init: the context file is not a nice-to-have. A game that ships the
@@ -177,6 +235,8 @@ export const initPlayvibe = (m: PlayvibeManifest): PlayvibeManifest => {
   if (!m.storageKeys.debugPin || !m.storageKeys.kickTok) missing.push("storageKeys");
   if (!m.env.agentToken || !m.env.signKey) missing.push("env");
   if (!m.storePrefixes.session || !m.storePrefixes.audio || !m.storePrefixes.brainState) missing.push("storePrefixes");
+  if (!m.brain || !m.brain.origin || !m.brain.appPath || !m.brain.versionPath || !m.brain.fixlogKey || !m.brain.notifyTag || !m.brain.versionScheme || !m.brain.liveVerify) missing.push("brain");
+  if (!m.analysis || !Array.isArray(m.analysis.keyEvents) || !m.analysis.keyEvents.length || !Array.isArray(m.analysis.heartbeat) || !m.analysis.heartbeat.length) missing.push("analysis");
   if (!m.net || typeof m.net.getRoom !== "function" || typeof m.net.getSnap !== "function" || typeof m.net.getLive !== "function") missing.push("net");
   if (missing.length) {
     throw new Error(

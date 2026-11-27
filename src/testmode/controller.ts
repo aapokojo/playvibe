@@ -404,7 +404,10 @@ export function useTestController(cfg: TestControllerCfg) {
 }
 /* the brain's public work-state doc (unguessable suffix is the gate,
    same exposure class as the QA record). The brain (and the transcribe
-   route) mirror their current job here as {sid, stage, note, ts};
+   route) mirror their current job here as {sid, stage, note, ts,
+   pushed?} (pushed: the v0.7.0 structured done-note flag — true/false
+   when a brain run's own fix landed or was gate-refused; absent from
+   pre-v4.10 docs and read as null then);
    TEST MODE renders the stage live so autonomous work is visible
    in-game while it runs instead of being invisible until a push
    lands. The URL is pvRoute("state") at call time — the manifest
@@ -465,11 +468,11 @@ export function useTestAgent(cfg: TestAgentCfg) {
      missed. */
   const [qaList, setQaList] = useState<{ id: string; text: string; opts: string[]; ts: number }[]>([]);
   // live brain work-state — rides the same 30 s tick as the QA inbox
-  const [agentWork, setAgentWork] = useState<{ sid: string; stage: string; note: string; ts: number } | null>(null);
+  const [agentWork, setAgentWork] = useState<{ sid: string; stage: string; note: string; ts: number; pushed?: boolean | null } | null>(null);
   /* shadow copies for the poll loop (the loop reads refs, so it
      never re-subscribes to renders) + the version-badge ref behind the
      reload-button gate */
-  const agentWorkRef = useRef<{ sid: string; stage: string; note: string; ts: number } | null>(null);
+  const agentWorkRef = useRef<{ sid: string; stage: string; note: string; ts: number; pushed?: boolean | null } | null>(null);
   const lastKickRef = useRef(0);
   const verBadgeRef = useRef<HTMLSpanElement | null>(null);
   /* LOAD NEW VERSION renders only when the brain's done-note
@@ -525,7 +528,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
         const br = await fetch(pvRoute("state"), { cache: "no-store" }).catch(() => null);
         if (!stopped && br && br.ok) {
           const j2 = (await br.json().catch(() => null)) as
-            | { current?: { sid?: unknown; stage?: unknown; note?: unknown; ts?: unknown } }
+            | { current?: { sid?: unknown; stage?: unknown; note?: unknown; ts?: unknown; pushed?: unknown } }
             | null;
           const c = j2 && j2.current;
           if (c && typeof c.sid === "string" && typeof c.stage === "string") {
@@ -534,6 +537,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
               stage: c.stage,
               note: typeof c.note === "string" ? c.note : "",
               ts: typeof c.ts === "number" ? c.ts : 0,
+              pushed: typeof c.pushed === "boolean" ? c.pushed : null,
             };
             agentWorkRef.current = cur;
             setAgentWork(cur);
