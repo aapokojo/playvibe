@@ -21,7 +21,7 @@ export const setActiveManifest = (m: PlayvibeManifest): void => {
 export const pv = (): PlayvibeManifest => {
   if (!active) {
     throw new Error(
-      "playvibe: initPlayvibe(manifest) ei ole ajettu — testitilan pinta ei käynnisty ilman manifestia. Kutsu initPlayvibe({ ...oman pelin manifest, net }) testitilan avauksessa.",
+      "playvibe: initPlayvibe(manifest) has not run — the test-mode surface will not boot without a manifest. Call initPlayvibe({ ...your game's manifest, net }) when test mode opens.",
     );
   }
   return active;

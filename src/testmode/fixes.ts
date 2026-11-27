@@ -1,5 +1,5 @@
-/* fixes.ts: the TESTITILA player-oversight surface transport:
-   KORJAUKSET (past fixes + PALAUTA revert) and JONO (the analysis
+/* fixes.ts: the TEST MODE player-oversight surface transport:
+   FIXES (past fixes + REVERT revert) and QUEUE (the analysis
    queue). The player — not the brain — is the reversal authority:
    an unsatisfactory fix is reverted from HERE (a deterministic,
    player-authorized job; the brain never reverses on narration), and
@@ -9,7 +9,7 @@
    Reads (poll every 30 s like the QA inbox) need no credential; the
    mutations reuse the same kick credentials (the kick route's game lane:
    sessionStorage debug pin + localStorage kick token — the HMAC token
-   the debug route issues after a correct code; same 401 koodi re-ask flow
+   the debug route issues after a correct code; same 401 code re-ask flow
    as kickAnalysis, so the parked pin prompt auto-resumes). */
 
 import { pv, pvRoute } from "../cfg";
@@ -75,7 +75,7 @@ export const pollFixes = async (): Promise<FixesData | null> => {
     return {
       /* the fixlog is ASCENDING (oldest first): slice(0, N) would keep
          the OLDEST N and the newest ships would fall off the panel's
-         list. Keep the NEWEST N instead (slice(-N)); the KORJAUKSET
+         list. Keep the NEWEST N instead (slice(-N)); the FIXES
          list reverses for display. */
       fixes: j.fixes.slice(-12),
       queue: { running: j.queue.running ?? null, items: j.queue.items.slice(0, 12) },
@@ -85,7 +85,7 @@ export const pollFixes = async (): Promise<FixesData | null> => {
   }
 };
 
-/* LISÄÄ JONOON (replaces the direct kick behind the ANALYSOI button):
+/* ENQUEUE (replaces the direct kick behind the ANALYZE NOW button):
    starts immediately when the brain is idle, waits its turn otherwise.
    The signature matches kickAnalysis exactly, so the button's parked-pin
    flow (kickAfterPinRef/setDebugPin/setDebugAsk) is unchanged. */
@@ -95,26 +95,26 @@ export const queueAnalysis = async (
   onPinNeeded?: (sid: string) => void,
 ): Promise<boolean> => {
   try {
-    flash("analyysi lisätään jonoon…");
+    flash("adding the analysis to the queue…");
     const r = await postFixes({ action: "enqueue", sid, ...creds() });
     if (!r.ok) {
-      if (r.status === 401 && r.err.includes("koodi")) {
-        flash(`analyysi: ${r.err} — syötä testitilan koodi`);
+      if (r.status === 401) {
+        flash(`analysis: ${r.err} — enter the test-mode code`);
         if (onPinNeeded) onPinNeeded(sid);
         return false;
       }
-      flash(r.err ? `analyysi: ${r.err}` : `jono ei käynnistynyt (HTTP ${r.status})`);
+      flash(r.err ? `analysis: ${r.err}` : `queue did not start (HTTP ${r.status})`);
       return false;
     }
-    flash("analyysi jonossa — AGENTTI-osio ja JONO päivittyvät");
+    flash("analysis queued — the AGENT and QUEUE sections update");
     return true;
   } catch (e) {
-    flash(`jono ei käynnistynyt (${e instanceof Error ? e.message : "?"})`);
+    flash(`queue did not start (${e instanceof Error ? e.message : "?"})`);
     return false;
   }
 };
 
-/* PALAUTA: enqueue a player-authorized revert of one shipped fix. The
+/* REVERT: enqueue a player-authorized revert of one shipped fix. The
    brain executes it as a deterministic gated push (no model verdict):
    the stored edits invert, the pipeline bumps + verifies as usual.
    Only entries that carry their recorded edits are revertible — older
@@ -123,13 +123,13 @@ export const requestRevert = async (fixId: string, flash: (m: string) => void): 
   try {
     const r = await postFixes({ action: "revert", fixId, ...creds() });
     if (!r.ok) {
-      flash(r.err ? `palautus: ${r.err}` : `palautus ei käynnistynyt (HTTP ${r.status})`);
+      flash(r.err ? `revert: ${r.err}` : `revert did not start (HTTP ${r.status})`);
       return false;
     }
-    flash("palautus jonossa — aivot suorittavat sen deterministisesti");
+    flash("revert queued — the brain runs it deterministically");
     return true;
   } catch (e) {
-    flash(`palautus ei käynnistynyt (${e instanceof Error ? e.message : "?"})`);
+    flash(`revert did not start (${e instanceof Error ? e.message : "?"})`);
     return false;
   }
 };
@@ -140,12 +140,12 @@ export const dequeueItem = async (id: string, flash: (m: string) => void): Promi
   try {
     const r = await postFixes({ action: "dequeue", id, ...creds() });
     if (!r.ok) {
-      flash(r.err ? `jono: ${r.err}` : `poisto ei onnistunut (HTTP ${r.status})`);
+      flash(r.err ? `queue: ${r.err}` : `removal failed (HTTP ${r.status})`);
       return false;
     }
     return true;
   } catch (e) {
-    flash(`poisto ei onnistunut (${e instanceof Error ? e.message : "?"})`);
+    flash(`removal failed (${e instanceof Error ? e.message : "?"})`);
     return false;
   }
 };

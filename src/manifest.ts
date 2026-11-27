@@ -28,9 +28,9 @@ export interface PlayvibeRoutes {
   kick: string;
   /** agent question inbox (GET; POST {action:"answer", id, choice}) */
   agentqa: string;
-  /** brain work-state doc (GET) — feeds the AGENTTI line + reload gate */
+  /** brain work-state doc (GET) — feeds the AGENT line + reload gate */
   state: string;
-  /** KORJAUKSET + JONO transport (GET; POST enqueue|revert|dequeue) */
+  /** FIXES + QUEUE transport (GET; POST enqueue|revert|dequeue) */
   fixes: string;
   /** origin prewarm HEAD (STOP-time upload must not fire on a cold path) */
   room: string;
@@ -120,7 +120,7 @@ export interface PlayvibeManifest {
       net client functions; funnel.ts reads them through pv().net */
   net: PlayvibeNet;
   /** REQUIRED: repo-root context file the brain reads for game rules,
-      KORJAUKSET conventions and lane contracts. initPlayvibe throws
+      FIXES conventions and lane contracts. initPlayvibe throws
       without it — no context file, no agent. */
   contextFile: string;
   /** running app version (badge + reload gate); at integration this
@@ -180,7 +180,7 @@ export const initPlayvibe = (m: PlayvibeManifest): PlayvibeManifest => {
   if (!m.net || typeof m.net.getRoom !== "function" || typeof m.net.getSnap !== "function" || typeof m.net.getLive !== "function") missing.push("net");
   if (missing.length) {
     throw new Error(
-      `playvibe: manifest puuttuu kentät (${missing.join(", ")}) — kontekstitiedosto on pakollinen, agentti ei käynnisty ilman sitä`,
+      `playvibe: manifest is missing fields (${missing.join(", ")}) — the context file is mandatory, the agent will not boot without it`,
     );
   }
   /* step 1: store the validated manifest as the package-wide cfg —

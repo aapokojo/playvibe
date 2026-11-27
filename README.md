@@ -1,6 +1,6 @@
 # playvibe
 
-The TESTITILA player-oversight agent surface as a standalone, game-agnostic
+The TEST MODE player-oversight agent surface as a standalone, game-agnostic
 package. It gives any game one draggable panel through which the player
 records narrated test sessions, watches an autonomous agent analyze and fix
 the game live, queues work, answers the agent's questions and reverts
@@ -15,22 +15,23 @@ The player-oversight loop for a game that is fixed by an autonomous agent:
    packets, throttled canvas snapshots, mic + engine audio. The device
    saves nothing, ever; everything uploads to the game's store in
    idempotent slices (a failed upload parks in an in-memory outbox with a
-   YRITÄ UUDELLEEN retry, never a file download).
+   RETRY retry, never a file download).
 2. The server transcribes the narration, and the player enqueues the
-   session for analysis (ANALYSOI NYT). Several sessions can queue; one
+   session for analysis (ANALYZE NOW). Several sessions can queue; one
    brain run is in flight at a time.
 3. The game's brain (a deployed agent, named in the manifest) fetches
    the session JSON + transcript, classifies the session (clean / needs
    a question / fixable), pushes gated fixes and verifies them live.
-4. The panel shows it all: AGENTTI (live stage of the current run), JONO
-   (waiting queue items), KORJAUKSET (the full change ledger, newest on
+4. The panel shows it all: AGENT (live stage of the current run), QUEUE
+   (waiting queue items), FIXES (the full change ledger, newest on
    top).
-5. The player is the reversal authority: PALAUTA deterministically
+5. The player is the reversal authority: REVERT deterministically
    reverts the newest fix (2-tap confirm; it ships a real new version).
    The agent never reverses on its own.
 
-The player-facing surface is in Finnish by design (the reference
-player's language); the contracts below are language-neutral.
+The player-facing surface is in English (the first integration's
+in-game copy stays Finnish until it consumes this package); the
+contracts below are language-neutral.
 
 ## Technology
 
@@ -148,7 +149,7 @@ const ctl = useTestController({
   mode,        // session-meta stamps
   room,        // { code, role } | null
   version: APP_VERSION,
-  setKickSid,  // called when transcription succeeds (the ANALYSOI target)
+  setKickSid,  // called when transcription succeeds (the ANALYZE NOW target)
 });
 
 const agent = useTestAgent({ testMode, flash: toast }); // toast used outside test mode
@@ -188,7 +189,7 @@ and route engine events through the `probeEvRef` tap. `TEST_URL` is a
 | `session` | POST | `{sid, part, total, data}` | session JSON in ~40 KB slices; idempotent store writes, index written last |
 | `audio` | POST | `{sid, part, total, data, mime, bytes, trunc}` | base64 audio slices, 40 KB each, 64-part cap (about 5 min); index last |
 | `transcribe` | POST | `{sid}` | server reassembles the audio, transcribes it, stores the transcript, mirrors the stage; 503 if the transcription API key is unset |
-| `kick` | POST | `{sid, pin, kick}` | two credential lanes: game lane (session debug pin or durable HMAC kick token) or agent lane (server token); starts ONE brain run; 401 `koodi puuttuu` / `väärä koodi` |
+| `kick` | POST | `{sid, pin, kick}` | two credential lanes: game lane (session debug pin or durable HMAC kick token) or agent lane (server token); starts ONE brain run; 401 with the server's missing- or wrong-code message |
 | `debug` | POST | the test-mode code | verifies against the server's debug-pin env var, issues the durable kick token; the code never ships in the bundle |
 | `agentqa` | GET/POST | GET `{questions[]}`; POST `{action:"answer", id, choice}` | player answers are anonymous; ask/consume need the agent token |
 | `state` | GET | `{current: {sid, stage, note, ts}}` | stages: uploaded, transcribed, analyzing, fixing, reverting, waiting, done |
@@ -205,23 +206,28 @@ Deploy the brain workflow (name matches `workflowName`; today that is
 a Mistral workflow deployment, see The brain provider); it fetches
 the session JSON + transcript from your store by sid and follows the
 rules in your `AGENT-CONTEXT.md`. The panel renders its progress from
-the `state` doc and its shipped fixes land in KORJAUKSET through the
+the `state` doc and its shipped fixes land in FIXES through the
 `fixes` route. Keep the ledger rule in your context file: every change,
 every lane, no exceptions.
 
 ## House rules
 
-- The KORJAUKSET ledger records ALL changes irrespective of channel
+- The FIXES ledger records ALL changes irrespective of channel
   (agent, chat, infrastructure; display-only entries when there are no
   stored edits).
-- The player, not the agent, is the reversal authority (PALAUTA).
-- The device saves nothing, ever (in-memory outbox + YRITÄ UUDELLEEN).
+- The player, not the agent, is the reversal authority (REVERT).
+- The device saves nothing, ever (in-memory outbox + RETRY).
 - Honest state lines always; a failed hop names itself.
 - Server first: the session JSON is on the server before anything else
   happens, bounded by a wall-clock deadline.
 
-## Current state (0.5.0)
+## Current state (0.6.0)
 
+- The player-facing UI is fully English (section names AGENT /
+  QUEUE / FIXES, buttons ANALYZE NOW / REVERT / RETRY / LOAD NEW
+  VERSION, all state lines, titles and error strings); the one Finnish
+  string kept is the reference brain's done-note prefix check
+  ("korjausta ei pushattu"), a data contract, not UI text.
 - Generalization steps 1-3 are DONE: the funnel reads the game's net
   taps, every fetch site builds its URL from the manifest
   (`apiBase` + route via `pvRoute`), the two storage keys and the badge

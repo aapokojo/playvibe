@@ -46,7 +46,7 @@ export const uploadAudioParts = async (sid: string, blob: Blob, mime: string): P
       }
       if (!ok && Date.now() < deadline) await new Promise((res) => setTimeout(res, 750 * 2 ** att));
     }
-    if (!ok) throw new Error(`${last.message} [osa ${p + 1}/${list.length}]`);
+    if (!ok) throw new Error(`${last.message} [part ${p + 1}/${list.length}]`);
   }
   return list.length;
 };

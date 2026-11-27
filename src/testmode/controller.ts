@@ -1,5 +1,5 @@
 /* test-mode controller: the REC/STOP recorder lifecycle, the
-   device-saves-nothing outbox with its YRITÄ UUDELLEEN retry, throttled
+   device-saves-nothing outbox with its RETRY retry, throttled
    snapshot capture, the session-JSON assembly with its sliced idempotent
    upload, and the onstop mp3 transcode + audio upload lane. Only seams:
    the game taps (canvas / engine audio / probe funnel), the
@@ -24,7 +24,7 @@ export interface TestControllerCfg {
   mode: string;
   room: { code: string; role?: string } | null;
   version: string;
-  /** called when transcription succeeds (the ANALYSOI target sid) */
+  /** called when transcription succeeds (the ANALYZE NOW target sid) */
   setKickSid: (sid: string) => void;
 }
 
@@ -42,7 +42,7 @@ export function useTestController(cfg: TestControllerCfg) {
   const testSess = useRef<TestSess | null>(null);
   /* the device saves nothing, EVER (no local downloads of audio or
      logs). A failed upload parks itself in this in-memory
-     outbox instead of a download sheet; the panel shows a YRITÄ UUDELLEEN
+     outbox instead of a download sheet; the panel shows a RETRY
      button whose retry re-runs the same idempotent store writes. The
      parked blobs live only until the page dies. */
   const outboxRef = useRef<{ kind: "json" | "audio"; sid: string; parts?: string[]; blob?: Blob; mime?: string }[]>([]);
@@ -54,7 +54,7 @@ export function useTestController(cfg: TestControllerCfg) {
     if (retryBusyRef.current || !outboxRef.current.length) return;
     retryBusyRef.current = true;
     setRetryBusy(true);
-    testStatusFlash(`yritetään uudelleen (${outboxRef.current.length})…`);
+    testStatusFlash(`retrying (${outboxRef.current.length})…`);
     let okN = 0;
     for (const t of outboxRef.current) {
       try {
@@ -94,9 +94,9 @@ export function useTestController(cfg: TestControllerCfg) {
     setRetryBusy(false);
     if (!left) {
       setOutboxErr("");
-      testStatusFlash(`uusinta onnistui — kaikki (${okN}) palvelimella ✓`);
+      testStatusFlash(`re-run ok — all (${okN}) on the server ✓`);
     } else {
-      testStatusFlash(`uusinta: ${okN} lähti, ${left} jäi — YRITÄ UUDELLEEN alla`);
+      testStatusFlash(`re-run: ${okN} sent, ${left} left — RETRY below`);
     }
   };
   const testCapture = (tag: string) => {
@@ -174,14 +174,14 @@ export function useTestController(cfg: TestControllerCfg) {
           // imported chunk that never loads outside test mode. On any
           // failure the raw recording walks the same upload path; a
           // failed upload parks in the in-memory outbox for a
-          // YRITÄ UUDELLEEN retry - the device saves nothing, ever, but a
+          // RETRY retry - the device saves nothing, ever, but a
           // session is never silently lost either.
           (async () => {
             const raw = new Blob(s.chunks, { type: s.mime });
             let ac: AudioContext | null = null;
             const t0 = performance.now();
             try {
-              testStatusFlash("mp3-koodaus…");
+              testStatusFlash("mp3 encoding…");
               ac = new AudioContext(); // inside the STOP tap's call stack: iOS-safe
               const decoded = await ac.decodeAudioData(await raw.arrayBuffer());
               const rate = 16000; // narration-grade: mono, 16 kHz, 64 kbps ≈ 0.48 MB/min
@@ -215,29 +215,29 @@ export function useTestController(cfg: TestControllerCfg) {
               // no device download — the narration rides the same
               // sliced-upload path as the JSON (the store's audio parts)
               testStatusFlash(
-                `mp3 ✓ ${(mp3.size / 1e6).toFixed(1)} MB (${((performance.now() - t0) / 1000).toFixed(1)} s koodaus) — lähetetään…`,
+                `mp3 ✓ ${(mp3.size / 1e6).toFixed(1)} MB (${((performance.now() - t0) / 1000).toFixed(1)} s encode) — uploading…`,
               );
               try {
                 const n = await uploadAudioParts(s.sid, mp3, "audio/mpeg");
-                testStatusFlash(`äänikin palvelimella ✓ (${n} osaa) — ${s.sid}`);
+                testStatusFlash(`audio on the server too ✓ (${n} parts) — ${s.sid}`);
                 await kickTranscribe(s.sid, testStatusFlash, (okSid) => setKickSid(okSid));
               } catch (ea) {
                 outboxRef.current.push({ kind: "audio", sid: s.sid, blob: mp3, mime: "audio/mpeg" });
                 setOutboxN(outboxRef.current.length);
                 setOutboxErr(ea instanceof Error ? ea.message : "?");
-                testStatusFlash(`audio ei palvelimelle (${ea instanceof Error ? ea.message : "?"}) — YRITÄ UUDELLEEN alla`);
+                testStatusFlash(`audio not uploaded (${ea instanceof Error ? ea.message : "?"}) — RETRY below`);
               }
             } catch (e) {
               // encode failed: the raw container still walks the upload path
               try {
                 const n = await uploadAudioParts(s.sid, raw, s.mime || "audio/webm");
-                testStatusFlash(`raaka ääni palvelimella ✓ (${n} osaa; mp3-koodaus ei onnistunut: ${e instanceof Error ? e.message : "?"})`);
+                testStatusFlash(`raw audio on the server ✓ (${n} parts; mp3 encode failed: ${e instanceof Error ? e.message : "?"})`);
                 await kickTranscribe(s.sid, testStatusFlash, (okSid) => setKickSid(okSid));
               } catch (ea2) {
                 outboxRef.current.push({ kind: "audio", sid: s.sid, blob: raw, mime: s.mime || "audio/webm" });
                 setOutboxN(outboxRef.current.length);
-                setOutboxErr(`mp3: ${e instanceof Error ? e.message : "?"} · lähetys: ${ea2 instanceof Error ? ea2.message : "?"}`);
-                testStatusFlash(`mp3 ei onnistunut (${e instanceof Error ? e.message : "?"}) — raaka ääni jonossa, YRITÄ UUDELLEEN alla`);
+                setOutboxErr(`mp3: ${e instanceof Error ? e.message : "?"} · upload: ${ea2 instanceof Error ? ea2.message : "?"}`);
+                testStatusFlash(`mp3 failed (${e instanceof Error ? e.message : "?"}) — raw audio parked, RETRY below`);
               }
             } finally {
               try {
@@ -256,8 +256,8 @@ export function useTestController(cfg: TestControllerCfg) {
       // Chrome). Name it in-game and in the JSON meta so the browser —
       // not the code — is the visible explanation.
       const crios = /CriOS\//.test(navigator.userAgent);
-      s.noAudio = `mic-failed${crios ? " (Chrome ei voi nauhoittaa micia - avaa peli Safarissa)" : ""}: ${e instanceof Error ? e.message : "unknown"}`;
-      if (crios) testStatusFlash("CHROME EI NAURAHOITA - avaa peli Safarissa");
+      s.noAudio = `mic-failed${crios ? " (Chrome cannot record the mic - open the game in Safari)" : ""}: ${e instanceof Error ? e.message : "unknown"}`;
+      if (crios) testStatusFlash("CHROME CANNOT RECORD - open the game in Safari");
       // no mic: still run the session for events/wire/snapshots, honest in JSON
       try {
         s.stream?.getTracks().forEach((t) => t.stop());
@@ -345,7 +345,7 @@ export function useTestController(cfg: TestControllerCfg) {
     // wait so a slow or dead network can never hold the session hostage.
     // After the budget (or any per-part failure) nothing is ever
     // saved locally - the slices park in the in-memory outbox, the status
-    // names the failed hop, and the YRITÄ UUDELLEEN button re-runs the
+    // names the failed hop, and the RETRY button re-runs the
     // idempotent writes when the network lets it. (The failing hop's
     // error names itself in the persistent outbox line.)
     const sid = s.sid;
@@ -354,7 +354,7 @@ export function useTestController(cfg: TestControllerCfg) {
     const list: string[] = [];
     for (let i = 0; i < json.length; i += SLICE) list.push(json.slice(i, i + SLICE));
     try {
-      setTestStatus("ladataan palvelimelle…");
+      setTestStatus("uploading to the server…");
       const deadline = Date.now() + 45000;
       for (let p = 0; p < list.length; p++) {
         let last: Error = new Error("?");
@@ -379,13 +379,13 @@ export function useTestController(cfg: TestControllerCfg) {
         }
         if (!ok) throw new Error(`${last.message} [osa ${p + 1}/${list.length}]`);
       }
-      testStatusFlash(`palvelimella ✓ ${sid}`);
+      testStatusFlash(`on the server ✓ ${sid}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "?";
       outboxRef.current.push({ kind: "json", sid, parts: list });
       setOutboxN(outboxRef.current.length);
       setOutboxErr(msg);
-      testStatusFlash(`ei palvelimelle (${msg}) — YRITÄ UUDELLEEN alla`);
+      testStatusFlash(`not uploaded (${msg}) — RETRY below`);
     }
   };
   return {
@@ -405,7 +405,7 @@ export function useTestController(cfg: TestControllerCfg) {
 /* the brain's public work-state doc (unguessable suffix is the gate,
    same exposure class as the QA record). The brain (and the transcribe
    route) mirror their current job here as {sid, stage, note, ts};
-   TESTITILA renders the stage live so autonomous work is visible
+   TEST MODE renders the stage live so autonomous work is visible
    in-game while it runs instead of being invisible until a push
    lands. The URL is pvRoute("state") at call time — the manifest
    is only active after initPlayvibe. */
@@ -418,7 +418,8 @@ export function useTestController(cfg: TestControllerCfg) {
    OLDER (a stale note from an earlier run - the state doc keeps the
    last note until the next kick) -> hide, otherwise the button would
    linger on the very complaint this fixes. The gate used to ALSO
-   require a note PREFIX (korjaus live / push ok) — a prefix list that
+   require a note PREFIX (the reference lane's live/ship prefixes) — a
+   prefix list that
    missed every other lane: revert notes and chat-lane ship notes
    both went without a reload prompt. The note FORMAT is already the
    contract — a parenthesized version — so the gate only requires the
@@ -439,7 +440,7 @@ const noteOffersNewVersion = (note: string, running: string): boolean => {
 
 
 export interface TestAgentCfg {
-  /** test mode gates the poll loop (the inbox feeds the TESTITILA panel) */
+  /** test mode gates the poll loop (the inbox feeds the TEST MODE panel) */
   testMode: boolean;
   /** non-test-mode toast: qa answers name their fate there */
   flash: (msg: string) => void;
@@ -447,8 +448,8 @@ export interface TestAgentCfg {
 
 /* test-agent surface: the question-inbox state + answer handler, the
    live brain work-state with the shadow ref its poll loop reads, the
-   LATAA UUSI VERSIO reload gate (the version check above), the
-   ANALYSOI NYT kick bookkeeping (sent record, parked-kick ref,
+   LOAD NEW VERSION reload gate (the version check above), the
+   ANALYZE NOW kick bookkeeping (sent record, parked-kick ref,
    last-kick stamp), and the self-re-arming agentqa + state poll loop
    with its visibility resume. Seams: the loop gate (testMode) and the
    toast (flash) arrive as cfg. The game keeps the debug-code prompt
@@ -471,7 +472,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
   const agentWorkRef = useRef<{ sid: string; stage: string; note: string; ts: number } | null>(null);
   const lastKickRef = useRef(0);
   const verBadgeRef = useRef<HTMLSpanElement | null>(null);
-  /* LATAA UUSI VERSIO renders only when the brain's done-note
+  /* LOAD NEW VERSION renders only when the brain's done-note
      names a version this build is not already running (no lingering
      button after the reload; the poll rewrite below makes it appear
      without a restart) */
@@ -489,7 +490,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
   // has run)
   const [kickSent, setKickSent] = useState<Record<string, boolean>>({});
   // sid of a kick parked for the test-mode code (the prompt re-opens
-  // when the kick route answers 401 koodi puuttuu because a PWA restart cleared
+  // when the kick route answers 401 missing-code because a PWA restart cleared
   // the cached code; a correct code auto-resumes the parked kick)
   const kickAfterPinRef = useRef("");
 
@@ -584,10 +585,10 @@ export function useTestAgent(cfg: TestAgentCfg) {
         body: JSON.stringify({ action: "answer", id, choice }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      pushFlash("vastaus lähetetty agentille");
+      pushFlash("answer sent to the agent");
     } catch {
       qaAnswered.current.delete(id);
-      pushFlash("vastaus ei yltänyt palvelimelle - yritä uudelleen");
+      pushFlash("answer did not reach the server - try again");
     }
   };
 

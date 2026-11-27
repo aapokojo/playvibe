@@ -1,30 +1,30 @@
-/* TestPanel.tsx — the TESTITILA debug panel: one panel, the whole agent
+/* TestPanel.tsx — the TEST MODE debug panel: one panel, the whole agent
    surface. The host game keeps every piece of state the panel reads
    (controller surface, inbox/work-state slices, the reload/kick seams
    and the collapse/drag layout state — collapse state stays in the game
    so it survives a testMode flip, and the version-badge ref stays there
    so noteOffersNewVersion keeps reading its own badge) and passes it all
    as props. The agent-surface state itself comes from ./controller's
-   useTestAgent; KORJAUKSET (past fixes + PALAUTA) and JONO (analysis
+   useTestAgent; FIXES (past fixes + REVERT) and QUEUE (analysis
    queue) are LOCAL panel state via ./fixes with their own 30 s poll.
    Player-spec design notes:
-   - AGENTTI + its contextual action band (ANALYSOI NYT & co) on top
-     with the task at hand; JONO under it with the NEXT-UP row first;
-     KORJAUKSET last, NEWEST ON TOP inside its own ~2-3-row scrollable
+   - AGENT + its contextual action band (ANALYZE NOW & co) on top
+     with the task at hand; QUEUE under it with the NEXT-UP row first;
+     FIXES last, NEWEST ON TOP inside its own ~2-3-row scrollable
      viewport.
-   - JONO shows WAITING items only — AGENTTI is the single surface for
+   - QUEUE shows WAITING items only — AGENT is the single surface for
      ongoing brain work (processing row and done/failed history removed
      from the queue).
-   - KORJAUKSET is the full change ledger — every change to the game
+   - FIXES is the full change ledger — every change to the game
      lists here, not just brain fixes (chat-lane and infrastructure
      ships are ledgered too, even without stored edits — those
-     display-only); PALAUTA is offered ONLY on the newest revertable
+     display-only); REVERT is offered ONLY on the newest revertable
      change, because older fixes may have other changes built on top of
      them and reverting under those would clobber their baseline (a
      clean revert of an older change would need bisecting what depends
      on it).
-   - ANALYSOI NYT never hides for a busy brain: enqueue is QUEUE-BASED —
-     adding a session while a run is in flight is exactly what JONO
+   - ANALYZE NOW never hides for a busy brain: enqueue is QUEUE-BASED —
+     adding a session while a run is in flight is exactly what QUEUE
      exists for (the API defers the start). The button hides only
      per-sid after a successful send (kickSent).
    - REC (mic + engine audio + wire log + frames), STOP &
@@ -38,12 +38,12 @@
      (viewport-fit=cover is set, so env() returns real insets;
      non-notched devices fall back to +8px). The vector bell and vector
      +/- collapse glyphs are for deterministic alignment in the 20x20
-     header boxes; STAGE_FI maps the brain's stage names into the
-     AGENTTI state line. */
+     header boxes; STAGE_EN maps the brain's stage names into the
+     AGENT state line. */
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 
-/* the player-oversight surface (KORJAUKSET + JONO) transport — a
+/* the player-oversight surface (FIXES + QUEUE) transport — a
    sibling of ./agent in the test lane; all of it stays local to the
    panel, so the host game's prop surface is untouched. */
 import { dequeueItem, pollFixes, queueAnalysis, requestRevert, type FixesData } from "./fixes";
@@ -78,14 +78,14 @@ const MinusIcon = () => (
     <path d="M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" />
   </svg>
 );
-const STAGE_FI: Record<string, string> = {
-  uploaded: "sessio vastaanotettu",
-  transcribed: "transkriptio valmis",
-  analyzing: "analyysi käynnissä",
-  fixing: "korjaus työn alla",
-  reverting: "palautus työn alla",
-  waiting: "odottaa sinun vastaustasi",
-  done: "valmis",
+const STAGE_EN: Record<string, string> = {
+  uploaded: "session received",
+  transcribed: "transcription ready",
+  analyzing: "analysis running",
+  fixing: "fix in progress",
+  reverting: "revert in progress",
+  waiting: "waiting for your answer",
+  done: "done",
 };
 
 
@@ -107,13 +107,13 @@ export interface TestPanelProps {
   agentWork: { sid: string; stage: string; note: string; ts: number } | null;
   qaList: { id: string; text: string; opts: string[]; ts: number }[];
   qaAnswer: (id: string, choice: string) => Promise<void>;
-  /* LATAA UUSI VERSIO gate; verBadgeRef spans the badge below */
+  /* LOAD NEW VERSION gate; verBadgeRef spans the badge below */
   reloadReady: boolean;
   verBadgeRef: MutableRefObject<HTMLSpanElement | null>;
   /* notification toggle (it serves the agent loop only) */
   pushOn: boolean;
   togglePush: () => Promise<void>;
-  /* ANALYSOI NYT + parked-kick seams (setDebugPin/setDebugAsk are game
+  /* ANALYZE NOW + parked-kick seams (setDebugPin/setDebugAsk are game
      state because submitDebugPin's code path also drives them) */
   kickSid: string;
   kickSent: Record<string, boolean>;
@@ -168,10 +168,10 @@ export function TestPanel({
   /* badge version: pv().version — the game's single version source
      flows in through the manifest at init, no package-level import */
   const APP_VERSION = pv().version;
-  /* KORJAUKSET + JONO — local panel state with its own 30 s poll
+  /* FIXES + QUEUE — local panel state with its own 30 s poll
      (the controller's agent work-state/QA pipeline stays untouched, and
      so does the game's prop surface: everything below reads ./fixes).
-     One queue, one brain run at a time; PALAUTA is a 2-tap confirm
+     One queue, one brain run at a time; REVERT is a 2-tap confirm
      because a revert ships a real new version. */
   const [fx, setFx] = useState<FixesData | null>(null);
   const [rvConfirm, setRvConfirm] = useState<{ id: string; ts: number } | null>(null);
@@ -209,7 +209,7 @@ export function TestPanel({
           >
             <div
               className="mb-1.5 flex cursor-move touch-none select-none items-center justify-between gap-1 border-b border-[#00f0ff]/30 pb-1 font-bold"
-              title="raahaa siirtääksesi paneelia"
+              title="drag to move the panel"
               onPointerDown={(e) => {
                 const r = testPanelRef.current?.getBoundingClientRect();
                 if (!r) return;
@@ -228,7 +228,7 @@ export function TestPanel({
                 testDrag.current = null;
               }}
             >
-              <span>TESTITILA</span>
+              <span>TEST MODE</span>
               <span className="flex items-center gap-1">
                 <span ref={verBadgeRef} className="text-[#b08cd8]">{APP_VERSION}</span>
                 {/* the notification toggle is a header icon
@@ -250,7 +250,7 @@ export function TestPanel({
                     className={`flex h-5 w-5 items-center justify-center rounded border transition-transform active:scale-95 ${
                       pushOn ? "border-[#00f0ff] text-[#00f0ff]" : "border-[#8a3fd9] text-[#b08cd8]"
                     }`}
-                    title="agentin ilmoitukset: uusi versio + kysymykset (iOS: asenna kotivalikkoon)"
+                    title="agent notifications: new version + questions (iOS: add to home screen)"
                   >
                     <BellIcon off={!pushOn} />
                   </button>
@@ -258,7 +258,7 @@ export function TestPanel({
                 <button
                   onClick={() => setTestCollapsed((c) => !c)}
                   className="flex h-5 w-5 items-center justify-center rounded border border-[#00f0ff]/50 text-[#00f0ff] transition-transform active:scale-95 active:bg-[#00f0ff] active:text-[#0a0718]"
-                  title={testCollapsed ? "avaa testitilan paneeli" : "piilota paneeli (peli näkyy)"}
+                  title={testCollapsed ? "open the test-mode panel" : "hide the panel (the game shows)"}
                 >
                   {testCollapsed ? <PlusIcon /> : <MinusIcon />}
                 </button>
@@ -269,7 +269,7 @@ export function TestPanel({
                 The pill stays compact: ● REC idle / ■ STOP while
                 recording, with the magenta REC marker so mid-game it is
                 obvious the mic is live. Stopping from the pill expands
-                the panel so the upload/transcribe/ANALYSOI funnel is
+                the panel so the upload/transcribe/ANALYZE NOW funnel is
                 visible right where it continues. */}
             {testCollapsed && (
               <div className="mt-1">
@@ -286,7 +286,7 @@ export function TestPanel({
                   className={`w-full rounded border px-2 py-1 font-bold transition-transform hover:-translate-y-0.5 ${
                     testRec ? "border-[#ff2fd6] text-[#ff2fd6] active:bg-[#ff2fd6] active:text-[#0a0718]" : "border-[#00f0ff] text-[#00f0ff] active:bg-[#00f0ff] active:text-[#0a0718]"
                   }`}
-                  title={testRec ? "lopeta tallennus ja avaa paneeli" : "käynnistä tallennus ilman paneelin avaamista"}
+                  title={testRec ? "stop recording and open the panel" : "start recording without opening the panel"}
                 >
                   {testRec ? "■ STOP" : "● REC"}
                 </button>
@@ -310,7 +310,7 @@ export function TestPanel({
                   onClick={endTest}
                   className="w-full rounded border border-[#ff2fd6] bg-[#0a0718] px-2 py-1 font-bold text-[#ff2fd6] transition-transform hover:-translate-y-0.5 active:bg-[#ff2fd6] active:text-[#0a0718]"
                 >
-                  STOP &amp; LÄHETÄ AGENTILLE
+                  STOP &amp; SEND TO AGENT
                 </button>
               </div>
             )}
@@ -329,7 +329,7 @@ export function TestPanel({
                 old layout stacked the flash ABOVE the previous brain
                 state, which read as two contradictory states at once. */}
             <div className="mt-1.5 border-t border-[#8a3fd9]/50 pt-1">
-              <div className="font-bold text-[#00f0ff]">AGENTTI</div>
+              <div className="font-bold text-[#00f0ff]">AGENT</div>
               {(() => {
                 if (testStatus && (!agentWork || testStatusTs >= agentWork.ts)) {
                   return (
@@ -342,26 +342,29 @@ export function TestPanel({
                       {(() => {
                         const note = agentWork.note || "";
                         if (agentWork.stage === "done" && note.startsWith("korjausta ei pushattu")) {
-                          return `analyysi valmis — aivojen oma korjaus jäi väliin (${note.slice("korjausta ei pushattu:".length).trim()}); chat-agentti hoitaa korjauksen`;
+                          /* the reference brain's done-note contract: this prefix
+                             means its own fix was gate-refused; the note text after
+                             the colon says why, and the chat lane handles the fix */
+                          return `analysis done — the brain's own fix did not land (${note.slice("korjausta ei pushattu:".length).trim()}); the chat lane will handle it`;
                         }
-                        return `${STAGE_FI[agentWork.stage] ?? agentWork.stage}${note ? ` — ${note}` : ""}`;
+                        return `${STAGE_EN[agentWork.stage] ?? agentWork.stage}${note ? ` — ${note}` : ""}`;
                       })()}
                       <span className="opacity-60"> ({agentWork.sid})</span>
                     </div>
                   );
                 }
-                return <div className="mt-1 leading-snug text-[#b08cd8] opacity-60">ei aktiivista analyysiä</div>;
+                return <div className="mt-1 leading-snug text-[#b08cd8] opacity-60">no active analysis</div>;
               })()}
             </div>
             {/* transient actions, contextual only — at the TOP next to the
-                AGENTTI state per the player spec (the task at hand reads
-                with its state line). ANALYSOI NYT while the transcript is
+                AGENT state per the player spec (the task at hand reads
+                with its state line). ANALYZE NOW while the transcript is
                 ready but un-sent (hidden right after a successful send);
-                LATAA UUSI VERSIO only when the brain reports a version
+                LOAD NEW VERSION only when the brain reports a version
                 actually on the server, and reloadReady additionally
                 requires the note to name a version this build is not
                 already running (a gated or clean run leaves nothing to
-                reload); YRITÄ UUDELLEEN while failed uploads wait in the
+                reload); RETRY while failed uploads wait in the
                 outbox (the device saves nothing, ever). Enqueue queues
                 even mid-run — the pre-queue busy gate is gone; the
                 button hides only per-sid after a send. */}
@@ -375,9 +378,9 @@ export function TestPanel({
                       }}
                       disabled={retryBusy}
                       className="w-full rounded border border-[#ff2fd6] bg-[#0a0718] px-2 py-1 font-bold text-[#ff2fd6] transition-transform hover:-translate-y-0.5 active:bg-[#ff2fd6] active:text-[#0a0718] disabled:opacity-50"
-                      title="lähetys jäi kesken — yritä uudelleen; mitään ei tallenneta laitteelle"
+                      title="upload unfinished — retry; nothing is saved on the device"
                     >
-                      ↻ YRITÄ UUDELLEEN {retryBusy ? "…" : `(${outboxN})`}
+                      ↻ RETRY {retryBusy ? "…" : `(${outboxN})`}
                     </button>
                     {outboxErr && (
                       <div className="mt-0.5 break-words text-[10px] leading-snug text-[#ff2fd6] opacity-70">{outboxErr}</div>
@@ -388,9 +391,9 @@ export function TestPanel({
                   <button
                     onClick={() => location.reload()}
                     className="mb-1 w-full rounded border border-[#00f0ff] bg-[#0a0718] px-2 py-1 font-bold text-[#00f0ff] transition-transform hover:-translate-y-0.5 active:bg-[#00f0ff] active:text-[#0a0718]"
-                    title="aivot julkaisivat uuden version — lataa se tähän ilman manuaalista selaamista"
+                    title="the brain shipped a new version — reload it here, no manual browsing needed"
                   >
-                    ↻ LATAA UUSI VERSIO
+                    ↻ LOAD NEW VERSION
                   </button>
                 )}
                 {kickSid && !kickSent[kickSid] && (
@@ -407,30 +410,30 @@ export function TestPanel({
                   });
                 }}
                 className="mt-0.5 w-full rounded border border-[#ff2fd6] bg-[#0a0718] px-2 py-1 font-bold text-[#ff2fd6] transition-transform hover:-translate-y-0.5 active:bg-[#ff2fd6] active:text-[#0a0718]"
-                title="käynnistä analyysi: agentti hakee session + transkription palvelimelta ja korjaa tai kysyy"
+                title="start the analysis: the agent fetches the session + transcript from the server and fixes or asks"
               >
-                ANALYSOI NYT
+                ANALYZE NOW
               </button>
                 )}
               </div>
             ) : null}
-            {/* JONO — the analysis queue: queue several narrated
+            {/* QUEUE — the analysis queue: queue several narrated
                 sessions; exactly one brain run is ever in flight.
                 Player spec: ONLY WAITING ROWS render here — live
-                brain-work updates belong to the AGENTTI line alone (it
+                brain-work updates belong to the AGENT line alone (it
                 reads the same state doc), and the queue must not echo
-                status in multiple places: no KÄSITTELLÄÄN row (AGENTTI
+                status in multiple places: no PROCESSING row (AGENT
                 already carries the stage) and no done/failed history
-                (KORJAUKSET below is the record). */}
+                (FIXES below is the record). */}
             {fx && fx.queue.items.some((it) => it.status === "waiting") && (
               <div className="mt-1.5 border-t border-[#8a3fd9]/50 pt-1">
-                <div className="mb-1 font-bold text-[#00f0ff]">JONO</div>
+                <div className="mb-1 font-bold text-[#00f0ff]">QUEUE</div>
                 {fx.queue.items
                   .filter((it) => it.status === "waiting")
                   .map((it) => (
                     <div key={it.id} className="mb-1 flex items-start gap-1 leading-snug">
                       <div className="grow">
-                        {it.kind === "analyze" ? "analyysi " + (it.sid ?? "") : "palautus " + (it.fixId ?? "")}
+                        {it.kind === "analyze" ? "analysis " + (it.sid ?? "") : "revert " + (it.fixId ?? "")}
                       </div>
                       <button
                         onClick={() => {
@@ -439,24 +442,24 @@ export function TestPanel({
                           });
                         }}
                         className="shrink-0 rounded border border-[#8a3fd9] px-1 py-0.5 text-[#b08cd8] active:scale-95"
-                        title="poista jonosta"
+                        title="remove from the queue"
                       >
-                        POISTA
+                        REMOVE
                       </button>
                     </div>
                   ))}
               </div>
             )}
-            {/* KORJAUKSET — the player-oversight list of past fixes
-                shipped by the brain/chat lanes. PALAUTA enqueues a
+            {/* FIXES — the player-oversight list of past fixes
+                shipped by the brain/chat lanes. REVERT enqueues a
                 deterministic revert (2-tap confirm; it ships a real new
                 version). Entries without stored edits (older chat-era
                 ships) display only.
-                NEWEST ON TOP (the freshest ships + their PALAUTA
+                NEWEST ON TOP (the freshest ships + their REVERT
                 buttons are what the player acts on), and the list
                 scrolls inside its own ~2-3-row viewport so it never
-                pushes AGENTTI/JONO off the panel.
-                Player spec: PALAUTA is offered ONLY on the newest
+                pushes AGENT/QUEUE off the panel.
+                Player spec: REVERT is offered ONLY on the newest
                 revertable change. An older fix may have other changes
                 built on top of it (brain fixes, chat fixes, panel/queue
                 work), and inverting its stored edits blindly could revert
@@ -468,7 +471,7 @@ export function TestPanel({
                 safe: nothing is built on it yet. Every entry still lists;
                 older ones display only. */}
             {fx && fx.fixes.length > 0 && (() => {
-              /* PALAUTA only on the newest revertable change. The
+              /* REVERT only on the newest revertable change. The
                  fixes arrive ascending, so reversed = newest first; the
                  FIRST entry that is not reverted and has stored edits is
                  the only one a clean deterministic revert can target
@@ -479,19 +482,19 @@ export function TestPanel({
               const newestRvIdx = rev.findIndex((g) => !g.reverted && g.edits && g.edits.length > 0);
               return (
               <div className="mt-1.5 border-t border-[#8a3fd9]/50 pt-1">
-                <div className="mb-1 font-bold text-[#00f0ff]">KORJAUKSET</div>
+                <div className="mb-1 font-bold text-[#00f0ff]">FIXES</div>
                 <div className="max-h-[84px] overflow-y-auto pr-0.5">
                   {rev.map((f, i) => (
                     <div key={f.id} className="mb-1 flex items-start gap-1 leading-snug">
                       <div className="grow">
                         <span className="text-[#b08cd8]">[{f.version}]</span> {f.desc}
-                        {f.reverted && <span className="opacity-60"> — palautettu</span>}
+                        {f.reverted && <span className="opacity-60"> — reverted</span>}
                         {/* revert ENTRIES carry a marker naming the fix
-                            they reversed — a plain "palautus: …" desc
+                            they reversed — a plain "revert: …" desc
                             reads like the original change and made the
-                            player think PALAUTA sat on the wrong
+                            player think REVERT sat on the wrong
                             row. */}
-                        {f.reverts && <span className="opacity-60"> ↩ kumosi {f.reverts}:n</span>}
+                        {f.reverts && <span className="opacity-60"> ↩ reverted {f.reverts}</span>}
                       </div>
                       {!f.reverted && i === newestRvIdx && (
                         <button
@@ -507,9 +510,9 @@ export function TestPanel({
                             }
                           }}
                           className={`shrink-0 rounded border px-1 py-0.5 active:scale-95 ${rvConfirm && rvConfirm.id === f.id ? "border-[#ff2fd6] text-[#ff2fd6]" : "border-[#8a3fd9] text-[#b08cd8]"}`}
-                          title="palauta uusin korjaus — aivot kumoavat sen deterministisesti ja julkaisevat uuden version (vanhempiin ei kajota: niiden päälle on voitu rakentaa)"
+                          title="revert the newest fix — the brain undoes it deterministically and ships a new version (older ones untouched: changes may be built on them)"
                         >
-                          {rvConfirm && rvConfirm.id === f.id ? "VAHVISTA" : "PALAUTA"}
+                          {rvConfirm && rvConfirm.id === f.id ? "CONFIRM" : "REVERT"}
                         </button>
                       )}
                     </div>
@@ -521,7 +524,7 @@ export function TestPanel({
             {/* agent question inbox: fixed options + free text, anonymous */}
             {qaList.length > 0 && (
               <div className="mt-1.5 border-t border-[#8a3fd9]/50 pt-1">
-                <div className="mb-1 font-bold text-[#00f0ff]">AGENTTI KYSELEE</div>
+                <div className="mb-1 font-bold text-[#00f0ff]">AGENT ASKS</div>
                 {qaList.map((q) => (
                   <div key={q.id} className="mb-2">
                     <div className="mb-1 leading-snug text-[#f2f0ff]">{q.text}</div>
@@ -547,7 +550,7 @@ export function TestPanel({
                 ))}
               </div>
             )}
-            {/* the live work-state lives in the AGENTTI section (one agent surface) */}
+            {/* the live work-state lives in the AGENT section (one agent surface) */}
               </>
             )}
           </div>

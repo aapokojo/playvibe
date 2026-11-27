@@ -11,7 +11,7 @@ export const QAInput = ({ onSend }: { onSend: (v: string) => void }) => {
       <input
         value={v}
         onChange={(e) => setV(e.target.value)}
-        placeholder="vapaa vastaus…"
+        placeholder="free-form answer…"
         className="w-full rounded border border-[#8a3fd9] bg-[#150f2e] px-1.5 py-1 text-[#f2f0ff] outline-none focus:border-[#00f0ff]"
       />
       <button
@@ -22,7 +22,7 @@ export const QAInput = ({ onSend }: { onSend: (v: string) => void }) => {
           }
         }}
         className="rounded border border-[#ff2fd6] px-2 py-1 font-bold text-[#ff2fd6] transition-transform hover:-translate-y-0.5"
-        title="lähetä"
+        title="send"
       >
         →
       </button>
