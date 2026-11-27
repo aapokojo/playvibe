@@ -1,5 +1,7 @@
 /* agent.ts: store-side transcription kick + on-demand brain kick. */
 
+import { pv, pvRoute } from "../cfg";
+
 /* kick the store-side transcription (the audio never comes back to
    the device). Non-blocking by design: the transcript docs are the
    brain's inputs; TESTITILA just names the stage, or the honest reason
@@ -12,7 +14,7 @@ export const kickTranscribe = async (
 ): Promise<void> => {
   try {
     flash("transkriptio käynnissä…");
-    const r = await fetch("/api/transcribe", {
+    const r = await fetch(pvRoute("transcribe"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sid }),
@@ -33,7 +35,7 @@ export const kickTranscribe = async (
   }
 };
 
-/* on-demand brain kick — the ANALYSOI NYT button. POST /api/kick
+/* on-demand brain kick — the ANALYSOI NYT button. POST to the kick route
    {sid} starts ONE execution of the game's brain workflow (the name
    lives in the manifest's workflowName; the workflow fetches the session
    JSON + transcript from the store by the sid, so nothing but the sid
@@ -45,29 +47,29 @@ export const kickTranscribe = async (
 export const kickAnalysis = async (sid: string, flash: (m: string) => void, onPinNeeded?: (sid: string) => void): Promise<boolean> => {
   /* returns whether the kick actually started, so the button can
      reappear on failure (the old gate hid it for good). The kick carries
-     the cached test-mode code (sessionStorage); /api/kick refuses without
+     the cached test-mode code (sessionStorage); the kick route refuses without
      it, so a flipped localStorage alone can no longer start the agent. */
   try {
     flash("analyysi käynnistyy…");
     let pin = "";
     try {
-      pin = sessionStorage.getItem("bb-debug-pin") || "";
+      pin = sessionStorage.getItem(pv().storageKeys.debugPin) || "";
     } catch {
       /* private mode: no cached code — the server asks via 401 */
     }
-    /* the durable kick credential. /api/debug issues this
+    /* the durable kick credential. The debug route issues this
        server-signed token after a correct code (HMAC over AGENT_TOKEN,
        fixed domain tag); localStorage keeps it across PWA restarts so
        ANALYSOI never asks for the code again. The code itself still
        never persists on the device — the token unlocks only the
-       /api/kick game lane, not /api/debug. */
+       kick route's game lane, not the debug route. */
     let kick = "";
     try {
-      kick = localStorage.getItem("bb-kick-tok") || "";
+      kick = localStorage.getItem(pv().storageKeys.kickTok) || "";
     } catch {
       /* private mode: token lost with storage — the 401 path re-asks */
     }
-    const r = await fetch("/api/kick", {
+    const r = await fetch(pvRoute("kick"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sid, pin, kick }),

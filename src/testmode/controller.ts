@@ -7,6 +7,7 @@
    cfg - the version literal arrives as cfg.version from the game. */
 import { useEffect, useRef, useState } from "react";
 
+import { pvRoute } from "../cfg";
 import { wireLog, setWireTap } from "./funnel";
 import { uploadAudioParts } from "./upload";
 import { kickTranscribe } from "./agent";
@@ -63,7 +64,7 @@ export function useTestController(cfg: TestControllerCfg) {
             let got = false;
             for (let att = 0; att < 2 && !got; att++) {
               try {
-                const r = await fetch("/api/session", {
+                const r = await fetch(pvRoute("session"), {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ sid: t.sid, part: p, total: t.parts.length, data: t.parts[p] }),
@@ -276,7 +277,7 @@ export function useTestController(cfg: TestControllerCfg) {
     // row failed exactly there ("Load failed") while the server verified
     // healthy from outside the phone every time.
     import("@breezystack/lamejs").catch(() => {});
-    fetch("/api/room", { method: "HEAD" }).catch(() => {});
+    fetch(pvRoute("room"), { method: "HEAD" }).catch(() => {});
     wireLog.length = 0;
     setWireTap(true);
     probeEvRef.current = (ev) => {
@@ -364,7 +365,7 @@ export function useTestController(cfg: TestControllerCfg) {
         for (; att < 4 && !ok; att++) {
           if (Date.now() > deadline) break;
           try {
-            const r = await fetch("/api/session", {
+            const r = await fetch(pvRoute("session"), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ sid, part: p, total: list.length, data: list[p] }),
@@ -406,8 +407,8 @@ export function useTestController(cfg: TestControllerCfg) {
    route) mirror their current job here as {sid, stage, note, ts};
    TESTITILA renders the stage live so autonomous work is visible
    in-game while it runs instead of being invisible until a push
-   lands. */
-const BRAIN_STATE_URL = "/api/state";
+   lands. The URL is pvRoute("state") at call time — the manifest
+   is only active after initPlayvibe. */
 
 /* does the brain's done-note name a version NEWER than the one this
    device already runs? The running version is read from the UI badge
@@ -459,7 +460,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
   /* ---- agent question inbox ----
      Only the test-recorder panel polls this (test mode on): questions
      arrive via the agentqa route GET, answers POST back anonymously.
-     The brain pings the phone with /api/notify so a question is never
+     The brain pings the phone's push endpoint so a question is never
      missed. */
   const [qaList, setQaList] = useState<{ id: string; text: string; opts: string[]; ts: number }[]>([]);
   // live brain work-state — rides the same 30 s tick as the QA inbox
@@ -488,7 +489,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
   // has run)
   const [kickSent, setKickSent] = useState<Record<string, boolean>>({});
   // sid of a kick parked for the test-mode code (the prompt re-opens
-  // when /api/kick answers 401 koodi puuttuu because a PWA restart cleared
+  // when the kick route answers 401 koodi puuttuu because a PWA restart cleared
   // the cached code; a correct code auto-resumes the parked kick)
   const kickAfterPinRef = useRef("");
 
@@ -512,7 +513,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
     let timer: number | null = null;
     const poll = async () => {
       try {
-        const r = await fetch("/api/agentqa", { cache: "no-store" });
+        const r = await fetch(pvRoute("agentqa"), { cache: "no-store" });
         if (r.ok) {
           const j = (await r.json().catch(() => null)) as { questions?: { id: string; text: string; opts: string[]; ts: number }[] } | null;
           if (!stopped && j && Array.isArray(j.questions)) {
@@ -520,7 +521,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
           }
         }
         // brain work-state fetch (stage of the current job)
-        const br = await fetch(BRAIN_STATE_URL, { cache: "no-store" }).catch(() => null);
+        const br = await fetch(pvRoute("state"), { cache: "no-store" }).catch(() => null);
         if (!stopped && br && br.ok) {
           const j2 = (await br.json().catch(() => null)) as
             | { current?: { sid?: unknown; stage?: unknown; note?: unknown; ts?: unknown } }
@@ -577,7 +578,7 @@ export function useTestAgent(cfg: TestAgentCfg) {
     qaAnswered.current.add(id);
     setQaList((l) => l.filter((q) => q.id !== id));
     try {
-      const r = await fetch("/api/agentqa", {
+      const r = await fetch(pvRoute("agentqa"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "answer", id, choice }),

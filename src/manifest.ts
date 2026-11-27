@@ -107,7 +107,8 @@ export interface PlayvibeManifest {
   game: string;
   /** owner/repo of the GAME repo the agent fixes */
   repo: string;
-  /** the Mistral workflow deployment name that runs the brain */
+  /** the deployed brain workflow's name (today a Mistral workflow
+      deployment; the contract itself is provider-neutral) */
   workflowName: string;
   /** API base; "" = same-origin (routes are appended to it) */
   apiBase: string;
@@ -170,7 +171,7 @@ export const initPlayvibe = (m: PlayvibeManifest): PlayvibeManifest => {
   if (!m.repo) missing.push("repo");
   if (!m.workflowName) missing.push("workflowName");
   if (!m.contextFile) missing.push("contextFile");
-  if (!m.routes.session || !m.routes.audio || !m.routes.transcribe || !m.routes.kick || !m.routes.agentqa || !m.routes.state || !m.routes.fixes) {
+  if (!m.routes.session || !m.routes.audio || !m.routes.transcribe || !m.routes.kick || !m.routes.agentqa || !m.routes.state || !m.routes.fixes || !m.routes.room || !m.routes.debug) {
     missing.push("routes");
   }
   if (!m.storageKeys.debugPin || !m.storageKeys.kickTok) missing.push("storageKeys");

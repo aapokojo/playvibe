@@ -1,4 +1,4 @@
-/* cfg.ts — the playvibe cfg-tap holder (generalization step 1).
+/* cfg.ts — the playvibe cfg-tap holder (generalization steps 1-3).
    Every game-specific VALUE the package needs travels through the
    manifest (src/manifest.ts); this module holds the ACTIVE manifest so
    package modules can read their cfg without importing the consuming
@@ -25,4 +25,13 @@ export const pv = (): PlayvibeManifest => {
     );
   }
   return active;
+};
+
+/** The one URL builder every fetch site goes through (step 3):
+    apiBase ("" = same-origin) + the manifest route. */
+export const pvRoute = (
+  k: keyof PlayvibeManifest["routes"],
+): string => {
+  const m = pv();
+  return (m.apiBase || "") + m.routes[k];
 };

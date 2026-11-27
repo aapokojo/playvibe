@@ -1,5 +1,7 @@
 /* upload.ts: sliced narration upload transport (device saves nothing). */
 
+import { pvRoute } from "../cfg";
+
 /* Blob → base64 in one string. Only the fromCharCode call is
    chunked — spreading megabytes of byte args overflows the stack */
 export const blobB64 = async (b: Blob): Promise<string> => {
@@ -32,7 +34,7 @@ export const uploadAudioParts = async (sid: string, blob: Blob, mime: string): P
     for (let att = 0; att < 4 && !ok; att++) {
       if (Date.now() > deadline) break;
       try {
-        const r = await fetch("/api/audio", {
+        const r = await fetch(pvRoute("audio"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sid, part: p, total: list.length, data: list[p], mime, bytes: blob.size, trunc }),

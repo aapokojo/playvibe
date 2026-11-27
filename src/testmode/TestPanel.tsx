@@ -47,10 +47,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from "react";
    sibling of ./agent in the test lane; all of it stays local to the
    panel, so the host game's prop surface is untouched. */
 import { dequeueItem, pollFixes, queueAnalysis, requestRevert, type FixesData } from "./fixes";
-/* badge reads the game's single APP_VERSION constant (../version) —
-   one version source, so it cannot go stale; generalization step 2
-   moves this to a manifest prop and drops the ../version import */
-import { APP_VERSION } from "../version";
+import { pv } from "../cfg";
 import { QAInput } from "./QAInput";
 
 /* the emoji bell glyph overflows a tiny button on the phone
@@ -168,6 +165,9 @@ export function TestPanel({
   testPanelRef,
   testDrag,
 }: TestPanelProps) {
+  /* badge version: pv().version — the game's single version source
+     flows in through the manifest at init, no package-level import */
+  const APP_VERSION = pv().version;
   /* KORJAUKSET + JONO — local panel state with its own 30 s poll
      (the controller's agent work-state/QA pipeline stays untouched, and
      so does the game's prop surface: everything below reads ./fixes).

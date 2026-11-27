@@ -5,7 +5,7 @@
    and arrive here as props, exactly like TestPanel's other seams.
 
    The 5th tap does not flip test mode on directly; it asks for the
-   test-mode code first (/api/debug verifies it against the server's
+   test-mode code first (the debug route verifies it against the server's
    debug-pin env var, so the code never ships in the bundle). The
    accepted code is cached in sessionStorage and rides along every
    ANALYSOI NYT kick; localStorage keeps only the on/off flag. */

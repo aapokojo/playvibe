@@ -7,10 +7,12 @@
    in flight at a time.
 
    Reads (poll every 30 s like the QA inbox) need no credential; the
-   mutations reuse the same kick credentials (/api/kick's game lane:
+   mutations reuse the same kick credentials (the kick route's game lane:
    sessionStorage debug pin + localStorage kick token — the HMAC token
-   /api/debug issues after a correct code; same 401 koodi re-ask flow
+   the debug route issues after a correct code; same 401 koodi re-ask flow
    as kickAnalysis, so the parked pin prompt auto-resumes). */
+
+import { pv, pvRoute } from "../cfg";
 
 export type FixEditPair = { file: string; old: string; new: string };
 export type FixEntry = {
@@ -35,18 +37,18 @@ export type QueueItem = {
 export type QueueDoc = { running: { id: string; ts: number } | null; items: QueueItem[] };
 export type FixesData = { fixes: FixEntry[]; queue: QueueDoc };
 
-/* the same credential pair /api/kick checks: the debug PIN is
+/* the same credential pair the kick route checks: the debug PIN is
    session-scoped, the kick token is durable across PWA restarts */
 const creds = () => {
   let pin = "";
   let kick = "";
   try {
-    pin = sessionStorage.getItem("bb-debug-pin") || "";
+    pin = sessionStorage.getItem(pv().storageKeys.debugPin) || "";
   } catch {
     /* private mode: no cached code — the 401 path re-asks */
   }
   try {
-    kick = localStorage.getItem("bb-kick-tok") || "";
+    kick = localStorage.getItem(pv().storageKeys.kickTok) || "";
   } catch {
     /* private mode: token lost with storage — the 401 path re-asks */
   }
@@ -54,7 +56,7 @@ const creds = () => {
 };
 
 const postFixes = async (body: Record<string, unknown>) => {
-  const r = await fetch("/api/fixes", {
+  const r = await fetch(pvRoute("fixes"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -66,7 +68,7 @@ const postFixes = async (body: Record<string, unknown>) => {
 
 export const pollFixes = async (): Promise<FixesData | null> => {
   try {
-    const r = await fetch("/api/fixes", { cache: "no-store" });
+    const r = await fetch(pvRoute("fixes"), { cache: "no-store" });
     if (!r.ok) return null;
     const j = (await r.json().catch(() => null)) as Partial<FixesData> | null;
     if (!j || !Array.isArray(j.fixes) || !j.queue || !Array.isArray(j.queue.items)) return null;

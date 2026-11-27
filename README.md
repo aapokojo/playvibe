@@ -4,9 +4,8 @@ The TESTITILA player-oversight agent surface as a standalone, game-agnostic
 package. It gives any game one draggable panel through which the player
 records narrated test sessions, watches an autonomous agent analyze and fix
 the game live, queues work, answers the agent's questions and reverts
-unsatisfactory fixes. Extracted from a real production game (Blast Bugs,
-the first integration); the package itself carries zero values of any real
-game.
+unsatisfactory fixes. Proven end to end in a real production web game;
+the package itself carries zero values of any real game.
 
 ## What it is
 
@@ -20,10 +19,9 @@ The player-oversight loop for a game that is fixed by an autonomous agent:
 2. The server transcribes the narration, and the player enqueues the
    session for analysis (ANALYSOI NYT). Several sessions can queue; one
    brain run is in flight at a time.
-3. The game's brain workflow (a deployed Mistral agent, named in the
-   manifest) fetches the session JSON + transcript, classifies the
-   session (clean / needs a question / fixable), pushes gated fixes and
-   verifies them live.
+3. The game's brain (a deployed agent, named in the manifest) fetches
+   the session JSON + transcript, classifies the session (clean / needs
+   a question / fixable), pushes gated fixes and verifies them live.
 4. The panel shows it all: AGENTTI (live stage of the current run), JONO
    (waiting queue items), KORJAUKSET (the full change ledger, newest on
    top).
@@ -31,8 +29,41 @@ The player-oversight loop for a game that is fixed by an autonomous agent:
    reverts the newest fix (2-tap confirm; it ships a real new version).
    The agent never reverses on its own.
 
-The player-facing surface is in Finnish by design (the reference game's
-player is Finnish); the contracts below are language-neutral.
+The player-facing surface is in Finnish by design (the reference
+player's language); the contracts below are language-neutral.
+
+## Technology
+
+playvibe is built for WEB games, and the requirements run deep into the
+browser:
+
+- React 18+ (hooks + JSX). The panel's classes are Tailwind-style
+  utility strings, so Tailwind is the natural host, but any styling
+  pipeline that leaves the classNames alone works.
+- Browser media APIs: MediaRecorder (mic + engine audio mix, in-page
+  mp3 transcode via a lazily imported lamejs chunk), getUserMedia,
+  AudioContext. The recorder carries hard-won mobile Safari/Chrome
+  quirks (mime fallbacks, mic-denial classes), so a non-browser host
+  cannot reuse these files as is.
+- PWA-friendly, not PWA-required: safe-area insets for notched phones,
+  a self-re-arming poll loop that survives iOS standalone-PWA timer
+  suspension, web push for the notification toggle.
+
+A non-web game (Unity, a native app) cannot mount the panel as is. What
+it CAN still take from playvibe is everything around the panel: the
+manifest contract, the store + route protocol, the session/queue/ledger
+model and the brain contract. A native panel would be a
+reimplementation of the same server contract, not this package.
+
+## The brain provider
+
+The pipeline is provider-neutral: a brain is a deployed agent that
+fetches the session JSON + transcript from the game's store by sid and
+follows the game's context file. playvibe is currently configured to
+Mistral (the workflow deployment named in the manifest's
+`workflowName`, plus server-side transcription). Extending to another
+provider (Claude, ChatGPT) means implementing the same contract behind
+the same routes; the panel, the queue and the ledger do not change.
 
 ## What a game must provide
 
@@ -45,9 +76,10 @@ player is Finnish); the contracts below are language-neutral.
 - **Recorder seams**: the game canvas (screenshots), the engine's audio
   bus (`audioTap()`), and an engine event probe.
 - **The nine server routes** listed below, plus their env vars.
-- **A brain**: a deployed Mistral workflow (name goes in the manifest)
-  and the game's repo-root `AGENT-CONTEXT.md`, the context document the
-  brain reads for game rules, conventions and lane contracts.
+- **A brain**: a deployed agent workflow (name goes in the manifest;
+  see The brain provider) and the game's repo-root `AGENT-CONTEXT.md`,
+  the context document the brain reads for game rules, conventions and
+  lane contracts.
 
 ## Taking it into use
 
@@ -169,7 +201,8 @@ push lane), the signing key (signed writes) and the debug pin.
 
 ### 7. Deploy the brain and write your context file
 
-Deploy a Mistral workflow whose name matches `workflowName`; it fetches
+Deploy the brain workflow (name matches `workflowName`; today that is
+a Mistral workflow deployment, see The brain provider); it fetches
 the session JSON + transcript from your store by sid and follows the
 rules in your `AGENT-CONTEXT.md`. The panel renders its progress from
 the `state` doc and its shipped fixes land in KORJAUKSET through the
@@ -187,21 +220,16 @@ every lane, no exceptions.
 - Server first: the session JSON is on the server before anything else
   happens, bounded by a wall-clock deadline.
 
-## Current state (0.4.0)
+## Current state (0.5.0)
 
-Honest limits of the package today, all queued as mechanical migration
-steps:
-
-- The client fetches still read the fixed `/api/*` paths and the two
-  storage key literals from the first integration's snapshot; the
-  manifest's `routes` and `storageKeys` fields are validated at init and
-  become the read source in the pending migration steps. Until then,
-  implement the routes at the paths above.
-- `TestPanel.tsx` imports `../version` (a single `APP_VERSION`
-  constant); provide that module next to the package until the seam
-  moves to the manifest.
-- The brain's own per-game configuration (repo, tokens, version bump
-  scheme, live verify) is blastbugs-specific today; its generalization is
-  separate queued work.
-- Comments are neutralized (no first-game version tags or references);
-  the code is the proven snapshot of the first real integration.
+- Generalization steps 1-3 are DONE: the funnel reads the game's net
+  taps, every fetch site builds its URL from the manifest
+  (`apiBase` + route via `pvRoute`), the two storage keys and the badge
+  version read from the manifest, and the package imports no game
+  module.
+- `tsconfig.json` ships with the package: in a checkout run
+  `npm install typescript react react-dom @types/react @types/react-dom`
+  then `npm run typecheck` to verify (strict, no emit).
+- The brain's per-game configuration (repo, tokens, version bump
+  scheme, live verify) still lives inside the brain deployment itself;
+  its provider-neutral contract is what a second brain implements.
