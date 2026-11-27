@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "kind": "app",
-  "name": "blastbugs-brain",
+  "name": "playvibe-brain",
   "modules": [
     {
       "type": "app",

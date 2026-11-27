@@ -235,14 +235,16 @@ module you pass to initPlayvibe). Deploy the brain: the general brain
 SOURCE ships in this repo under `brain/` — do not copy it into the game
 repo. Each game gets its own Mistral workflow deployment that BUILDS
 from this repo (build_directory `brain`, dockerfile_path
-`deploy/docker/Dockerfile.worker`) with three per-game settings:
-BB_GAME_ORIGIN (the game's origin, for /api/manifest), the game's
-repo-token secret (the push lane), and BB_WORKFLOW_NAME matching the
-manifest's `workflowName` (the /v1/workflows/<name>/execute route the
-game's kick calls). The worker registers the workflow under that name
-(v4.13; it defaults to the first game's name). The deployed brain
-fetches your manifest from that route at
-run start, then the session JSON + transcript from your store by sid,
+`deploy/docker/Dockerfile.worker`) with the game's repo-token secret
+bound for the push lane (v4.14). The workflow registers under the
+single package identifier `playvibe-brain`; your game's deployment has
+its own `deployment_name` (the manifest's `workflowName`), and the
+game origin itself travels in the run input: the kick posts
+`{"input": {"sid": ..., "origin": "https://your.game", "dry_run": false}, "deployment_name": "<workflowName>"}`
+to /v1/workflows/playvibe-brain/execute. The deployment carries zero
+per-game values. The deployed brain fetches your manifest from that
+origin at run start, then the session JSON + transcript from your store
+by sid,
 and follows the rules in your `AGENT-CONTEXT.md`. The panel renders its progress from
 the `state` doc and its shipped fixes land in FIXES through the
 `fixes` route. Keep the ledger rule in your context file: every change,
@@ -299,10 +301,17 @@ every lane, no exceptions.
 - v0.9.0: publish-ready (exports map + files list; git-installable) and
   the brain home. The general brain source tree (`brain/`, worker
   v4.13) now lives in THIS repo: a game's brain deployment builds from
-  here with BB_GAME_ORIGIN, its repo-token secret and BB_WORKFLOW_NAME,
-  and game repos carry neither brain code nor vendored testmode copies.
-  Brain v4.13 makes the panel context fetch fail-open (a repo without
-  src/testmode/* is expected) and gives the workflow a per-game routing
-  name. Open question for the first second game: whether two
-  deployments can share one Mistral workspace app name in
-  brain/mistral.json, or whether that file needs per-game naming too.
+  here, and game repos carry neither brain code nor vendored testmode
+  copies. Brain v4.13 makes the panel context fetch fail-open (a repo
+  without src/testmode/* is expected).
+- v0.9.1: the brain is a GENERIC TEMPLATE (worker v4.14). The game
+  origin moves into the run input (the kick's execute body carries
+  {sid, origin} + deployment_name), the workflow identifier is the
+  package constant `playvibe-brain` (the manifest's workflowName is the
+  game's DEPLOYMENT name), the transcript store prefix joins the
+  manifest contract (storePrefixes.transcript), and the whole brain
+  tree is neutral: pv_* activity names, example-game import-time
+  placeholders, PV_* env names, no game names, routes, storage keys or
+  session history anywhere. The v0.9.0 open question is resolved:
+  deployments share the one app registered by brain/mistral.json and
+  differ only in deployment_name.

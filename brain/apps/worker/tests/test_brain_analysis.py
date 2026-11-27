@@ -10,7 +10,7 @@ from worker.workflows.brain_analysis import analyze_session, bump_version  # noq
 
 def _session():
     return {
-        "v": 1, "sid": "1795288800000-zzzz", "version": "v45", "mode": "ai",
+        "v": 1, "sid": "1795288800000-zzzz", "version": "v1", "mode": "ai",
         "durationMs": 44600, "ua": "ua", "screen": "390x844", "events": [
             {"ms": 0, "t": "session-start"},
             {"ms": 1000, "t": "turn"},
@@ -28,7 +28,7 @@ def _session():
 
 
 def test_analyze_counts():
-    m = analyze_session(_session(), "Peli toimi hyvin.")
+    m = analyze_session(_session(), "The game worked well.")
     assert m["booms"] == 1
     assert m["stalls"] == 1
     assert m["loads"] == 1
@@ -38,8 +38,8 @@ def test_analyze_counts():
 
 
 def test_bump_version():
-    assert bump_version("v45") == "v45.1"
-    assert bump_version("v45.1") == "v45.2"
+    assert bump_version("v1") == "v1.1"
+    assert bump_version("v1.1") == "v1.2"
     assert bump_version("bogus") == ""
 
 
@@ -55,8 +55,8 @@ def test_analyze_custom_vocab():
         {"ms": 5000, "k": "hb", "d": {}},
         {"ms": 7500, "k": "hb", "d": {}},
     ]
-    s["snapshots"] = [{"ms": 1000, "tag": "blast", "data": "x"}]
-    m = analyze_session(s, "", key_events=("blast",), heartbeat=("hb",))
+    s["snapshots"] = [{"ms": 1000, "tag": "hit", "data": "x"}]
+    m = analyze_session(s, "", key_events=("hit",), heartbeat=("hb",))
     assert m["booms"] == 0
     assert m["boomSnapshots"] == 1
     assert m["boomLateSnapshots"] == 0

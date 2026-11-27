@@ -44,9 +44,14 @@
    src/. The general brain source tree (brain/, worker v4.13) now
    lives in THIS repo as the canonical brain home: a game's brain
    deployment builds from here (build_directory "brain", dockerfile
-   deploy/docker/Dockerfile.worker) and carries only its BB_GAME_ORIGIN
-   + repo-token secrets (+ BB_WORKFLOW_NAME matching the game's
-   manifest workflowName). */
+   deploy/docker/Dockerfile.worker) with its repo-token secret bound.
+   v0.9.1: the brain is a GENERIC TEMPLATE — the game origin travels
+   in the run input (the kick posts {sid, origin, deployment_name}),
+   the workflow identifier is the package constant "playvibe-brain"
+   (the manifest's workflowName is the game's DEPLOYMENT name, sent as
+   deployment_name in the execute body), the transcript store prefix
+   joins storePrefixes, and the brain tree itself carries zero game
+   names, routes, keys or history. */
 
 import { setActiveManifest } from "./cfg";
 
@@ -96,6 +101,9 @@ export interface PlayvibeEnv {
 export interface PlayvibeStorePrefixes {
   /** session JSON docs: <prefix><sid> */
   session: string;
+  /** v0.9.1: transcript docs the brain fetches by sid — the store-side
+      transcription route writes them; the brain requires the prefix */
+  transcript: string;
   /** narration audio parts: <prefix><sid>-<n> */
   audio: string;
   /** per-session brain reports: <prefix><sid> */
@@ -121,7 +129,7 @@ export interface PlayvibeBrain {
   /** push-notification tag for the notify lane */
   notifyTag: string;
   /** version bump convention the pipeline applies; "vNN-patch":
-      v45 -> v45.1 -> v45.2 (the only scheme the brain implements
+      v1 -> v1.1 -> v1.2 (the only scheme the brain implements
       today — it validates the declared value and fails named on
       anything else rather than bumping wrong) */
   versionScheme: "vNN-patch";
@@ -186,8 +194,10 @@ export interface PlayvibeManifest {
   game: string;
   /** owner/repo of the GAME repo the agent fixes */
   repo: string;
-  /** the deployed brain workflow's name (today a Mistral workflow
-      deployment; the contract itself is provider-neutral) */
+  /** the game's brain DEPLOYMENT name (v0.9.1: the workflow identifier
+      is the package constant "playvibe-brain"; the kick's execute body
+      disambiguates the target deployment with this name. The contract
+      itself is provider-neutral) */
   workflowName: string;
   /** API base; "" = same-origin (routes are appended to it) */
   apiBase: string;
@@ -244,7 +254,7 @@ export const EXAMPLE_MANIFEST: PlayvibeManifestSeed = {
   },
   storageKeys: { debugPin: "pv-debug-pin", kickTok: "pv-kick-tok" },
   env: { agentToken: "PV_AGENT_TOKEN", githubToken: "PV_GITHUB_TOKEN", signKey: "PV_SIGN_KEY", debugPin: "PV_DEBUG_PIN" },
-  storePrefixes: { session: "pvsess-", audio: "pvaud-", report: "pvreport-", brainState: "pvbrain-state-<unguessable-suffix>" },
+  storePrefixes: { session: "pvsess-", transcript: "pvtrans-", audio: "pvaud-", report: "pvreport-", brainState: "pvbrain-state-<unguessable-suffix>" },
   contextFile: "AGENT-CONTEXT.md",
   version: "v0.0.0",
   brain: {
@@ -274,7 +284,7 @@ export const initPlayvibe = (m: PlayvibeManifest): PlayvibeManifest => {
   }
   if (!m.storageKeys.debugPin || !m.storageKeys.kickTok) missing.push("storageKeys");
   if (!m.env.agentToken || !m.env.signKey) missing.push("env");
-  if (!m.storePrefixes.session || !m.storePrefixes.audio || !m.storePrefixes.brainState) missing.push("storePrefixes");
+  if (!m.storePrefixes.session || !m.storePrefixes.transcript || !m.storePrefixes.audio || !m.storePrefixes.brainState) missing.push("storePrefixes");
   if (!m.brain || !m.brain.origin || !m.brain.appPath || !m.brain.versionPath || !m.brain.fixlogKey || !m.brain.notifyTag || !m.brain.versionScheme || !m.brain.liveVerify) missing.push("brain");
   if (!m.analysis || !Array.isArray(m.analysis.keyEvents) || !m.analysis.keyEvents.length || !Array.isArray(m.analysis.heartbeat) || !m.analysis.heartbeat.length) missing.push("analysis");
   if (!m.net || typeof m.net.getRoom !== "function" || typeof m.net.getSnap !== "function" || typeof m.net.getLive !== "function") missing.push("net");

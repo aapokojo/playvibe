@@ -8,7 +8,7 @@ prompt and the brain-state notes are built from.
 v4.10: the per-game counting vocabulary (which probe events are the game's
 KEY EVENTS, which wire kinds are its HEARTBEAT) arrives as parameters from
 the game's playvibe manifest (analysis.keyEvents / analysis.heartbeat); the
-defaults preserve the original Blast Bugs behavior.
+defaults are a plain example vocabulary (a boom-style key event and a push-style heartbeat).
 """
 
 SID_RE = r"^\d{12,14}-[0-9a-z]{4}$"
@@ -132,13 +132,13 @@ def context_last_verified(game_context: str | None) -> str | None:
 
 
 def tag_balance_delta(old: str, new: str) -> int:
-    """v4.9.6 (fk6n): JSX structural gate primitive. net(snippet) =
+    """v4.9.6: JSX structural gate primitive. net(snippet) =
     opening tags (<name ...) minus self-closing tags (/> minus... counted
     as open+immediate close) minus closing tags (</name>); returns
     net(new) - net(old). A structurally valid edit set keeps the FILE's
     total balance unchanged (sum of deltas 0 over the whole proposal):
     splits add open+close in pairs, move pairs net zero across their two
-    edits, text edits carry no tags at all. fk6n's build-break (one lone
+    edits, text edits carry no tags at all. The original build-break (one lone
     inserted </div>) had delta -1 and no partner edit. Pure, deliberately
     heuristic — a necessary condition for the pushed file to compile,
     false-positive-safe on this lane (narrated UI text carries no tags)."""
@@ -240,7 +240,7 @@ def verdict_prompt(
             "reversal: locate it and propose the edits normally. When truly in\n"
             "doubt ask via game_logic — but NEVER return app_fix with an empty\n"
             "`edits` list.\n\n"
-            "v45.50: the player has a PALAUTA (revert) list in TESTITILA for\n"
+            "The player has a revert list in the test panel for\n"
             "unsatisfactory fixes — every shipped fix is reversible BY THE\n"
             "PLAYER, so a small, honest, on-target fix is never a dead end:\n"
             "propose one confidently.\n\n"
@@ -319,7 +319,7 @@ def verdict_prompt(
         "  and an insertion edit (old = unique destination context, new = that\n"
         "  destination context + the relocated block). NEVER express a move as\n"
         "  old -> \"\" plus a bare insert.\n"
-        "- LEXICAL SCOPE (hard gate; the v45.28 page-crash class): every\n"
+        "- LEXICAL SCOPE (hard gate; the page-crash class): every\n"
         "  identifier used in `new` (ti, hud, e, ...) must resolve in the\n"
         "  exact lexical scope of the `old` site. NEVER close or move a JSX\n"
         "  map/array callback boundary (`))}` / `})`) to relocate UI: the\n"
@@ -327,7 +327,7 @@ def verdict_prompt(
         "  identifiers it uses. Moving something outside a box NEVER means\n"
         "  outside the map. If a move cannot be expressed without crossing a\n"
         "  scope boundary, classify game_logic and ask the player instead.\n"
-        "- CLOSING-TAG MOVES (hard gate, the fk6n class): moving a block\n"
+        "- CLOSING-TAG MOVES (hard gate, the unbalanced-tag class): moving a block\n"
         "  boundary (closing an element early, pulling content out of a\n"
         "  box) is exactly TWO edits — the inserted closing tag in one,\n"
         "  the removal of the original closing tag in the other — or ONE\n"
@@ -362,15 +362,15 @@ def edits_prompt(
     """v4.9.3 phase 2: the diagnosis is already committed; this prompt asks
     ONLY for the edits that implement it.
 
-    The six empty-edits sessions (imyf, 47wl, felf, b7zz, 5fbq, vjmn) all
+    The six original empty-edits sessions all
     SOLVED the fix inside their reasoning but emitted edits=[] in the
     guided-JSON verdict: v4.7 put the action fields FIRST in the schema,
     so the model had to commit `edits` BEFORE the reasoning field where it
     actually worked the anchors out. Splitting the emission gives the
     model a dedicated, edits-only output AFTER the diagnosis is done.
 
-    v4.9.7 (bqiv): `transcript` rides along. Phase 2 used to see only the
-    one-line fix_description — bqiv narrated "the boxes should be equal
+    `transcript` rides along. Phase 2 used to see only the
+    one-line fix_description — a past session narrated "the boxes should be equal
     width, contents fill them suitably" and the blind emission round read
     "fill" as flex-1 min-w-0, collapsing the HP bars to slivers. The
     narration is the ground truth for HOW the fix must look; the prompt
@@ -437,7 +437,7 @@ def edits_prompt(
         "  output budget and the whole answer dies truncated.",
         "- to SPLIT one element into two: exactly ONE edit (old = the whole",
         "  current element verbatim, new = the two resulting elements).",
-        "- CLOSING-TAG MOVES (hard gate, the fk6n class): closing an",
+        "- CLOSING-TAG MOVES (hard gate, the unbalanced-tag class): closing an",
         "  element early / pulling content out of a box is exactly TWO",
         "  edits — inserted closing tag in one, removal of the original",
         "  closing tag in the other — or ONE whole-element replacement.",
