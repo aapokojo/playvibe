@@ -83,7 +83,7 @@ export interface PlayvibeBrain {
   /** the file holding the single version literal the pipeline bumps */
   versionPath: string;
   /** extra read-only files fetched for prompt context (may be empty) */
-  readOnlyPaths: string[];
+  readOnlyPaths: readonly string[];
   /** the change-ledger store key (broker) */
   fixlogKey: string;
   /** push-notification tag for the notify lane */
@@ -98,11 +98,13 @@ export interface PlayvibeBrain {
 
 export interface PlayvibeAnalysis {
   /** the game's key events: counted, and each is expected to pair
-      with a +1.5 s snapshot frame (the first game: ["boom"]) */
-  keyEvents: string[];
+      with a +1.5 s snapshot frame (the first game: ["boom"]).
+      readonly: games type their seed with `as const` */
+  keyEvents: readonly string[];
   /** wire packet kinds whose cadence is stall-checked (the owning
-      client's live-state stream; gaps > 2 s = relay stall) */
-  heartbeat: string[];
+      client's live-state stream; gaps > 2 s = relay stall). readonly:
+      games type their seed with `as const` */
+  heartbeat: readonly string[];
 }
 
 /* ---- GENERALIZATION STEP 1: the funnel's relay-fetcher cfg taps ----
