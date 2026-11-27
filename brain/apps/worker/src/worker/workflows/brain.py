@@ -161,7 +161,7 @@ from .brain_analysis import (
 # run ever uses them: a missing or invalid manifest fails the run named
 # (pv-load-manifest). A second game needs only its own deployment and
 # its own kick origin; zero code changes.
-ORIGIN = ""  # the game origin, set from the run input before the manifest load
+ORIGIN = ""  # the game origin, set by pv_load_manifest from the run-input arg
 
 KV = "https://textdb.online"  # legacy reference only; reads go through the manifest's broker route
 SESS_PREFIX = "sess-"
@@ -265,20 +265,27 @@ def _apply_manifest(manifest: dict[str, Any]) -> None:
     start_to_close_timeout=timedelta(seconds=30),
     retry_policy_max_attempts=3,
 )
-async def pv_load_manifest() -> str:
+async def pv_load_manifest(origin: str = "") -> str:
     """v4.10: fetch the game's playvibe manifest (GET
-    {ORIGIN}/api/manifest — the origin set from the run input) and apply it. The route must serve
+    {ORIGIN}/api/manifest — the origin passed in the run input) and apply it. The route must serve
     {v: 1, manifest: {...}} with every required per-game field; a
     missing or invalid manifest fails the run NAMED here, before any
     store read, model call or push — the brain must never silently
     run on another game's import-time defaults."""
     import httpx
 
-    if not ORIGIN:
+    # v4.14: the workflow body runs in the orchestrator, activities in
+    # worker processes — the origin arrives as an ARGUMENT and is set on
+    # THIS module (the worker's own globals) exactly like _apply_manifest
+    # does, so every later activity reads it.
+    global ORIGIN
+    origin = (origin or "").strip().rstrip("/")
+    if not origin.startswith(("http://", "https://")):
         raise workflows.WorkflowError(
             "origin_missing: pass the game origin in the run input",
             non_retryable=True,
         )
+    ORIGIN = origin
     async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
         r = await c.get(f"{ORIGIN}/api/manifest")
         if r.status_code != 200:
@@ -1700,19 +1707,20 @@ class BrainWorkflow:
         try:
             # v4.14: the game origin comes from the run input — the ONE
             # per-game bootstrap value; a missing origin fails the run
-            # named before any store read or model call.
-            global ORIGIN
+            # named before any store read or model call. The workflow body
+            # runs in the orchestrator and activities in worker processes,
+            # so the origin travels as an ACTIVITY ARGUMENT — a module
+            # global set here never reaches the workers.
             origin_in = str(getattr(data, "origin", "") or "").strip().rstrip("/")
             if not origin_in.startswith(("http://", "https://")):
                 raise workflows.WorkflowError(
                     "origin_missing: pass the game origin in the run input",
                     non_retryable=True,
                 )
-            ORIGIN = origin_in
             # v4.10: EVERY run loads the game's manifest FIRST - the
             # pipeline's repo/paths/keys/routes/env names come from it; a
             # bad manifest fails the run NAMED before any store read.
-            await pv_load_manifest()
+            await pv_load_manifest(origin_in)
             # v4.9: the revert lane - a player-requested revert is
             # deterministic: the stored forward edits invert and run through
             # the exact same gate/apply/verify pipeline, no model call.
