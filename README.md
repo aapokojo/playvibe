@@ -89,17 +89,31 @@ the same routes; the panel, the queue and the ledger do not change.
 
 ### 1. Bring the package in
 
-Not on npm yet (private repo). Copy `src/` into your game repo or add it
-as a git dependency. React >= 18 is a peer dependency. Imports are by
-file path (no barrel index yet):
+Not on npm yet (private repo): add it as a git dependency and pin the
+commit. React >= 18 is a peer dependency. Since 0.9.0 the package has
+an exports map, so imports use the package name:
+
+```
+npm install github:aapokojo/playvibe#<commit-sha>
+```
 
 ```ts
-import { initPlayvibe } from "<playvibe>/src/manifest";
-import { useTestController, useTestAgent } from "<playvibe>/src/testmode/controller";
-import { TestPanel } from "<playvibe>/src/testmode/TestPanel";
-import { DebugPinPrompt } from "<playvibe>/src/testmode/DebugPinPrompt";
-import { getRoomT, getSnapT, getLiveT, TEST_URL } from "<playvibe>/src/testmode/funnel";
+import { initPlayvibe } from "playvibe/manifest";
+import { useTestController, useTestAgent } from "playvibe/testmode/controller";
+import { TestPanel } from "playvibe/testmode/TestPanel";
+import { DebugPinPrompt } from "playvibe/testmode/DebugPinPrompt";
+import { getRoomT, getSnapT, getLiveT, TEST_URL } from "playvibe/testmode/funnel";
+import { pv, pvRoute } from "playvibe/cfg";
 ```
+
+Bump the pinned sha to take a new version; every environment then
+installs the same source. The vendored-copy era (games carrying
+byte-identical copies of `src/`) ended with 0.9.0: the game's Tailwind
+content globs must also scan `node_modules/playvibe/src/**/*.{ts,tsx}`
+so the panel's utility classes still compile. Since the panel now
+lives in `node_modules`, the brain treats its source as OPTIONAL
+context: a game repo without `src/testmode/*` is expected (brain
+v4.13), and the read-only lane is enforced structurally.
 
 ### 2. Write your manifest (in YOUR repo)
 
@@ -109,7 +123,7 @@ added at boot:
 
 ```ts
 // src/pv-manifest.ts (your repo)
-import type { PlayvibeManifestSeed } from "<playvibe>/src/manifest";
+import type { PlayvibeManifestSeed } from "playvibe/manifest";
 import { APP_VERSION } from "./version";
 
 export const GAME_MANIFEST: PlayvibeManifestSeed = {
@@ -217,9 +231,17 @@ push lane), the signing key (signed writes) and the debug pin.
 ### 7. Deploy the brain and write your context file
 
 Serve the manifest seed at GET /api/manifest (serialize the same
-module you pass to initPlayvibe). Deploy the brain workflow (name
-matches `workflowName`; today that is a Mistral workflow deployment,
-see The brain provider); it fetches your manifest from that route at
+module you pass to initPlayvibe). Deploy the brain: the general brain
+SOURCE ships in this repo under `brain/` — do not copy it into the game
+repo. Each game gets its own Mistral workflow deployment that BUILDS
+from this repo (build_directory `brain`, dockerfile_path
+`deploy/docker/Dockerfile.worker`) with three per-game settings:
+BB_GAME_ORIGIN (the game's origin, for /api/manifest), the game's
+repo-token secret (the push lane), and BB_WORKFLOW_NAME matching the
+manifest's `workflowName` (the /v1/workflows/<name>/execute route the
+game's kick calls). The worker registers the workflow under that name
+(v4.13; it defaults to the first game's name). The deployed brain
+fetches your manifest from that route at
 run start, then the session JSON + transcript from your store by sid,
 and follows the rules in your `AGENT-CONTEXT.md`. The panel renders its progress from
 the `state` doc and its shipped fixes land in FIXES through the
@@ -237,7 +259,7 @@ every lane, no exceptions.
 - Server first: the session JSON is on the server before anything else
   happens, bounded by a wall-clock deadline.
 
-## Current state (0.8.0)
+## Current state (0.9.0)
 
 - The player-facing UI is fully English (section names AGENT /
   QUEUE / FIXES, buttons ANALYZE NOW / REVERT / RETRY / LOAD NEW
@@ -274,3 +296,13 @@ every lane, no exceptions.
   briefly flashing the old run's completed state. Sid equality, not
   timestamp comparison, is the discriminator (clock-skew-proof);
   panel behavior only, no manifest change.
+- v0.9.0: publish-ready (exports map + files list; git-installable) and
+  the brain home. The general brain source tree (`brain/`, worker
+  v4.13) now lives in THIS repo: a game's brain deployment builds from
+  here with BB_GAME_ORIGIN, its repo-token secret and BB_WORKFLOW_NAME,
+  and game repos carry neither brain code nor vendored testmode copies.
+  Brain v4.13 makes the panel context fetch fail-open (a repo without
+  src/testmode/* is expected) and gives the workflow a per-game routing
+  name. Open question for the first second game: whether two
+  deployments can share one Mistral workspace app name in
+  brain/mistral.json, or whether that file needs per-game naming too.

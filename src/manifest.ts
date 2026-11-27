@@ -36,7 +36,17 @@
    (first seen live on a phone). The poll now replaces any doc whose
    sid is not the kicked sid (within the 10-minute kick window) with
    a neutral "analysis starting" placeholder; sid equality is immune
-   to phone/server clock skew, which a ts comparison is not. */
+   to phone/server clock skew, which a ts comparison is not.
+   v0.9.0: publish-ready — the package gains an exports map and a
+   files list, so a game installs it as a git dependency and imports
+   it as "playvibe/..." (playvibe/manifest, playvibe/cfg,
+   playvibe/testmode/*) instead of carrying vendored byte-copies of
+   src/. The general brain source tree (brain/, worker v4.13) now
+   lives in THIS repo as the canonical brain home: a game's brain
+   deployment builds from here (build_directory "brain", dockerfile
+   deploy/docker/Dockerfile.worker) and carries only its BB_GAME_ORIGIN
+   + repo-token secrets (+ BB_WORKFLOW_NAME matching the game's
+   manifest workflowName). */
 
 import { setActiveManifest } from "./cfg";
 

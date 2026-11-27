@@ -1,9 +1,24 @@
 {
   "name": "playvibe",
-  "version": "0.8.1",
-  "private": true,
-  "type": "module",
+  "version": "0.9.0",
   "description": "Game-agnostic player-oversight agent surface for web games: test-mode panel with narration recorder, wire funnel, analysis queue, change ledger (FIXES) and agent inbox. Context manifest required at init; brain contract is provider-neutral (currently configured to Mistral).",
+  "repository": {
+    "type": "git",
+    "url": "github:aapokojo/playvibe"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/manifest.ts",
+    "./manifest": "./src/manifest.ts",
+    "./cfg": "./src/cfg.ts",
+    "./testmode/*": "./src/testmode/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
