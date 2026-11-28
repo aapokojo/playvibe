@@ -81,7 +81,6 @@ export interface PlayvibeRoutes {
   /** v0.8.0: the brain's result-push endpoint (POST {token, title,
       body, url, tag}). Brain-facing; the panel never calls it */
   notify: string;
-}
   /** v0.9.2: OPTIONAL deployment-status lane. POST is the game's
       Vercel deployment-webhook receiver (x-vercel-signature
       HMAC-verified against the env var env.deployHookSecret names);
@@ -89,6 +88,16 @@ export interface PlayvibeRoutes {
       band (30 s poll). A game without the lane omits the field: no
       band renders, nothing else changes. */
   deploys?: string;
+  /** v0.9.4: OPTIONAL served-version poll (GET → JSON with a top-level
+      `version` string, e.g. {"version":"v1.10"}). When present the panel
+      polls it on the same chain as the QA/state loop and offers LOAD NEW
+      VERSION whenever the served version is strictly newer than the
+      running one — the gate then covers EVERY lane: brain fixes AND
+      dev-lane pushes that never write the brain's state doc (the
+      note-based gate alone made those invisible: a new version shipped
+      from the chat/dev lane produced no reload prompt). Games without
+      the route keep the note-based gate. */
+  version?: string;
 }
 
 export interface PlayvibeStorageKeys {
@@ -104,7 +113,6 @@ export interface PlayvibeEnv {
   githubToken: string;
   signKey: string;
   debugPin: string;
-}
   /** v0.9.2: OPTIONAL env var NAME holding the Vercel deployment-webhook
       secret (Team Settings → Webhooks). Documentation only — nothing
       in this package reads the VALUE; the game's own receiver does. */
@@ -123,7 +131,6 @@ export interface PlayvibeStorePrefixes {
   report: string;
   /** brain public work-state doc (unguessable suffix = the gate) */
   brainState: string;
-}
   /** v0.9.2: OPTIONAL deploy-history doc key — the receiver appends
       (newest last, capped) through the store; omit when the game has
       no deploy webhook lane */
@@ -294,6 +301,7 @@ export const EXAMPLE_MANIFEST: PlayvibeManifestSeed = {
     broker: "/api/pv-broker",
     notify: "/api/pv-notify",
     deploys: "/api/pv-deploys",
+    version: "/api/pv-version",
   },
   storageKeys: { debugPin: "pv-debug-pin", kickTok: "pv-kick-tok" },
   env: { agentToken: "PV_AGENT_TOKEN", githubToken: "PV_GITHUB_TOKEN", signKey: "PV_SIGN_KEY", debugPin: "PV_DEBUG_PIN", deployHookSecret: "PV_DEPLOY_HOOK_SECRET" },

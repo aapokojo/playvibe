@@ -7,7 +7,7 @@
    cfg - the version literal arrives as cfg.version from the game. */
 import { useEffect, useRef, useState } from "react";
 
-import { pvRoute } from "../cfg";
+import { pv, pvRoute } from "../cfg";
 import { wireLog, setWireTap } from "./funnel";
 import { uploadAudioParts } from "./upload";
 import { kickTranscribe } from "./agent";
@@ -453,6 +453,29 @@ const noteOffersNewVersion = (note: string, running: string): boolean => {
 
 
 
+/* v0.9.4: the served-version gate. Same numeric compare as the note
+   gate above, but the candidate is the version the server CURRENTLY
+   serves (the routes.version poll), which covers EVERY lane: brain
+   fixes (their bump deploys before the done note lands) AND dev-lane
+   pushes that never write the brain's state doc at all — the note-only
+   gate made those invisible: a new version shipped from chat produced
+   no reload prompt. Empty candidate = no version route declared (the
+   poll leaves it "") = no gate; empty running text = badge not
+   rendered yet, offer the reload rather than hide it. */
+const versionIsNewer = (candidate: string, running: string): boolean => {
+  if (!candidate) return false;
+  if (!running) return true;
+  const a = running.replace(/^v/, "").split(".").map((x) => parseInt(x, 10) || 0);
+  const b = candidate.replace(/^v/, "").split(".").map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (b[i] ?? 0) - (a[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return false;
+};
+
+
+
 export interface TestAgentCfg {
   /** test mode gates the poll loop (the inbox feeds the TEST MODE panel) */
   testMode: boolean;
@@ -486,15 +509,21 @@ export function useTestAgent(cfg: TestAgentCfg) {
   const agentWorkRef = useRef<{ sid: string; stage: string; note: string; ts: number; pushed?: boolean | null } | null>(null);
   const lastKickRef = useRef(0);
   const verBadgeRef = useRef<HTMLSpanElement | null>(null);
-  /* LOAD NEW VERSION renders only when the brain's done-note
-     names a version this build is not already running (no lingering
-     button after the reload; the poll rewrite below makes it appear
-     without a restart) */
+  /* v0.9.4: the served-version poll's current value (the loop below
+     keeps it fresh; the badge text stays this build's own version) */
+  const [servedVersion, setServedVersion] = useState("");
+  const servedVersionRef = useRef("");
+  /* LOAD NEW VERSION renders when the brain's done-note names a version
+     this build is not already running (no lingering button after the
+     reload; the poll rewrite below makes it appear without a restart),
+     OR when the served version is newer than the running one (the
+     routes.version lane — covers dev-lane pushes too) */
   const reloadReady =
-    !!agentWork &&
-    agentWork.stage === "done" &&
-    /\((v\d+(?:\.\d+)?)\)/.test(agentWork.note || "") &&
-    noteOffersNewVersion(agentWork.note || "", verBadgeRef.current?.textContent || "");
+    (!!agentWork &&
+      agentWork.stage === "done" &&
+      /\((v\d+(?:\.\d+)?)\)/.test(agentWork.note || "") &&
+      noteOffersNewVersion(agentWork.note || "", verBadgeRef.current?.textContent || "")) ||
+    versionIsNewer(servedVersion, verBadgeRef.current?.textContent || "");
   // the on-demand brain button needs the sid of the LAST session whose
   // transcription succeeded (kickTranscribe sets it in its success path)
   const [kickSid, setKickSid] = useState("");
@@ -589,6 +618,21 @@ export function useTestAgent(cfg: TestAgentCfg) {
           } else {
             agentWorkRef.current = null;
             setAgentWork(null);
+          }
+        }
+        /* v0.9.4 served-version watch: with routes.version the panel also
+           learns about versions shipped OUTSIDE the brain (chat/dev-lane
+           pushes never write the brain's state doc, so the note-based
+           gate stayed silent for them). Strictly-newer than the badge's
+           running version is enough — the reload gate does the rest. */
+        if (pv().routes.version) {
+          const vr = await fetch(pvRoute("version"), { cache: "no-store" }).catch(() => null);
+          if (!stopped && vr && vr.ok) {
+            const jv = (await vr.json().catch(() => null)) as { version?: unknown } | null;
+            if (jv && typeof jv.version === "string" && jv.version) {
+              servedVersionRef.current = jv.version;
+              setServedVersion(jv.version);
+            }
           }
         }
       } catch {

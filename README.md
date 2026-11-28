@@ -295,6 +295,13 @@ every lane, no exceptions.
   result push). With them declared in the manifest the brain builds
   EVERY URL it calls from the served seed; no game route is
   hardcoded in the brain.
+- `routes.version` (v0.9.4): the OPTIONAL served-version poll. GET
+  returns a top-level `version` string (e.g. `{"version":"v1.10"}`);
+  the panel polls it on the same chain as the QA/state loop and
+  offers LOAD NEW VERSION whenever the served version is strictly
+  newer than the running one, so the reload gate covers EVERY lane —
+  brain fixes AND dev-lane pushes that never write the brain's state
+  doc. Games without the route keep the note-based gate.
 - v0.8.1: the agent work-state poll's stale-state guard — after a
   kick, a state doc still describing the PREVIOUS run (sid mismatch)
   renders as a neutral "analysis starting" placeholder instead of
