@@ -1308,7 +1308,7 @@ async def pv_apply(
     # v4.4: ONE atomic commit via the git data API (blobs -> tree on HEAD's
     # base_tree -> commit -> fast-forward ref PATCH); a raced push fails
     # the ref update honestly instead of clobbering what landed meanwhile
-    async with httpx.AsyncClient(timeout=60, headers=_PV_UA) as c:
+    async with httpx.AsyncClient(timeout=60, headers=_PV_UA, follow_redirects=True) as c:
         h = _gh_headers(tok)
         rr = await c.get(f"{GITHUB}/{REPO}/git/ref/heads%2Fmain", headers=h)
         if rr.status_code != 200:
@@ -1425,7 +1425,7 @@ async def pv_notify(title: str, body: str, tag: str) -> str:
     tok = _env("agentToken")
     if not tok:
         return "skip: agent token missing"
-    async with httpx.AsyncClient(timeout=30, headers=_PV_UA) as c:
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
         r = await c.post(
             NOTIFY_URL,
             json={
@@ -1454,7 +1454,7 @@ async def pv_ask(qid: str, text: str, opts: list[str]) -> str:
     tok = _env("agentToken")
     if not tok:
         return "skip: agent token missing"
-    async with httpx.AsyncClient(timeout=30, headers=_PV_UA) as c:
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
         r = await c.post(
             QA_URL,
             json={"action": "ask", "token": tok, "id": qid[:64], "text": text[:300], "opts": opts[:4]},
@@ -1471,7 +1471,7 @@ async def pv_report(sid: str, report: dict[str, Any]) -> str:
     """Persist the session report (report-<sid>, 30 d TTL in the store)."""
     import httpx
 
-    async with httpx.AsyncClient(timeout=30, headers=_PV_UA) as c:
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
         await _kv_put(c, f"{REPORT_PREFIX}{sid}", json.dumps(report, ensure_ascii=False, default=str))
     return "ok"
 
@@ -1588,7 +1588,7 @@ async def pv_fixlog_read() -> list[dict[str, Any]]:
     """The fix log (via the broker)."""
     import httpx
 
-    async with httpx.AsyncClient(timeout=30, headers=_PV_UA) as c:
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
         d = await _kv_get_json(c, FIXLOG_KEY) or {}
         fixes = d.get("fixes")
         return [f for f in fixes if isinstance(f, dict)] if isinstance(fixes, list) else []
@@ -1621,7 +1621,7 @@ async def pv_fixlog_add(entry: dict[str, Any]) -> str:
 
     entry = dict(entry)
     entry["ts"] = int(1000 * time.time())
-    async with httpx.AsyncClient(timeout=30, headers=_PV_UA) as c:
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
         d = await _kv_get_json(c, FIXLOG_KEY) or {}
         fixes = [f for f in (d.get("fixes") or []) if isinstance(f, dict)]
         fixes = [f for f in fixes if str(f.get("id") or "") != str(entry.get("id") or "")]
@@ -1639,7 +1639,7 @@ async def pv_fixlog_reverted(fix_id: str, revert_version: str) -> str:
     """Mark one fix entry reverted (the panel row shows it)."""
     import httpx
 
-    async with httpx.AsyncClient(timeout=30, headers=_PV_UA) as c:
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
         d = await _kv_get_json(c, FIXLOG_KEY) or {}
         fixes = [f for f in (d.get("fixes") or []) if isinstance(f, dict)]
         hit = 0
@@ -1669,7 +1669,7 @@ async def pv_queue_advance(result_stage: str) -> str:
     tok = _pv_token()
     if not tok:
         return "skip: agent token missing"
-    async with httpx.AsyncClient(timeout=30, headers=_PV_UA) as c:
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
         r = await c.post(
             QUEUE_ADVANCE,
             json={"action": "advance", "token": tok, "result": str(result_stage)[:20]},
