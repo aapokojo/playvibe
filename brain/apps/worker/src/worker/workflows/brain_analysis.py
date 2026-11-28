@@ -313,8 +313,10 @@ def verdict_prompt(
     return (
         "You are the autonomous dev-agent brain for the game described in the\n"
         "GAME CONTEXT block below. A test session was recorded on the player's\n"
-        "phone: game probe events, relay wire packets, canvas snapshots, and a\n"
-        "narration transcript (the player describes what they saw).\n\n"
+        "phone: game probe events, relay wire packets, canvas snapshots (their\n"
+        "content is described in the SNAPSHOT OBSERVATIONS block below when\n"
+        "available), and a narration transcript (the player describes what\n"
+        "they saw).\n\n"
         "DETERMINISTIC METRICS (ground truth for timings):\n"
         + json.dumps(metrics, ensure_ascii=False, default=str)
         + "\n\n"
@@ -406,6 +408,39 @@ def verdict_prompt(
         "choose game_logic. fix_description is one short English sentence\n"
         "naming the fix.\n"
     )
+
+
+def snapshot_block(sight: dict) -> str:
+    """v4.19 vision lane: render the sight model's frame descriptions into
+    the verdict prompt. `sight` is pv_sight's result; its frames are what a
+    vision model SAW in the session's real canvas snapshots, so they are
+    ground truth for what was on the player's screen. Empty or malformed
+    sight renders "" so the verdict prompt is untouched on fail-open."""
+    if not isinstance(sight, dict):
+        return ""
+    frames = sight.get("frames")
+    if not isinstance(frames, list):
+        return ""
+    lines = [
+        "SNAPSHOT OBSERVATIONS (a vision model described the recorded canvas",
+        "frames; this is ground truth for what was on the player's screen —",
+        "when these and the narration disagree, these WIN):",
+    ]
+    for f in frames:
+        if not isinstance(f, dict):
+            continue
+        desc = str(f.get("desc") or "").strip()
+        if not desc:
+            continue
+        tag = str(f.get("tag") or "?")
+        ms = f.get("ms")
+        lines.append(f"- [{tag} @ {ms}ms] {desc}")
+    summary = str(sight.get("summary") or "").strip()
+    if summary:
+        lines.append(f"Overall: {summary}")
+    if len(lines) <= 3:
+        return ""
+    return "\n".join(lines) + "\n"
 
 
 def edits_prompt(

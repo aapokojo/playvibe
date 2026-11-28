@@ -30,6 +30,15 @@ deployment}. Pipeline per session sid:
   4. deterministic analysis (the session ritual, ported to
      brain_analysis.analyze_session: event/wire histograms, pump
      cadence, freezes, boundary-load hunt, key-event snapshot pairing)
+  4b. v4.19 vision lane: the session's canvas snapshots ride the
+     session JSON as base64 data URLs (the same lane the blast clips
+     use — no image storage, the vision model's image_url part takes
+     the data URL directly). pv_sight shows up to SIGHT_MAX of them to
+     a vision-capable model and its frame descriptions ride the
+     verdict prompt as the SNAPSHOT OBSERVATIONS block (ground truth
+     for what was on the player's screen). Fail-open: no snapshots or
+     any failure degrades to a text-only run, never blocks it; the
+     verdict call itself stays text-only.
   5. Mistral model verdict (structured): clean | app_fix | game_logic
      - clean   -> stage done "no changes: everything as designed"
      - game_logic -> stage waiting + push + ONE in-game question (the
@@ -235,6 +244,7 @@ from .brain_analysis import (
     bump_version,
     context_last_verified,
     edits_prompt,
+    snapshot_block,
     tag_balance_delta,
     verdict_prompt,
 )
@@ -289,6 +299,15 @@ CTX_MAX_KB = 350  # total budget across all full-context files
 CTX_EXCLUDE: list[str] = []  # extra repo paths (file or dir prefix) to skip
 FILE_PATHS = {"App.tsx": APP_PATH, "TestPanel.tsx": PANEL_PATH, "version.ts": VER_PATH}
 VERDICT_MODEL = "mistral-medium-latest"
+# v4.19: the vision lane. The session's canvas snapshots ride the session
+# JSON as base64 data URLs (the same lane the blast clips use) — the brain
+# can read them directly, no image storage needed. pv_sight shows up to
+# SIGHT_MAX frames to a vision-capable model and its plain-text frame
+# descriptions ride the verdict prompt as SNAPSHOT OBSERVATIONS. The
+# verdict call itself stays text-only.
+SIGHT_MODEL = "mistral-small-latest"
+SIGHT_MAX = 6  # frames shown per run (even-spaced; first + last kept)
+SIGHT_MAX_IMG_CHARS = 400_000  # skip frames larger than this
 MAX_PARTS = 64
 FIXLOG_KEY = "fixlog"  # the player-visible fix log (broker)
 QUEUE_ADVANCE = ""  # the analysis-queue advance route (manifest routes.fixes)
@@ -562,6 +581,23 @@ class TargetCheck(BaseModel):
     would have been flagged here."""
     on_target: bool
     why: str = ""
+
+
+class FrameDesc(BaseModel):
+    """v4.19 vision lane: one described canvas frame."""
+    tag: str = ""
+    ms: int = 0
+    desc: str = ""
+
+
+class SightOut(BaseModel):
+    """v4.19 vision lane: pv_sight's structured output — one description
+    per shown frame plus an overall summary. The frames are what a vision
+    model SAW in the session's real canvas snapshots (ground truth for
+    what was on the player's screen); until v4.19 the analysis only ever
+    met their counts and tags."""
+    frames: list[FrameDesc] = []
+    summary: str = ""
 
 
 class BrainResult(BaseModel):
@@ -1368,6 +1404,96 @@ async def pv_fetch(sid: str,
 
 
 @workflows.activity(
+    name="pv-sight",
+    start_to_close_timeout=timedelta(seconds=180),
+    retry_policy_max_attempts=2,
+    retry_policy_backoff_coefficient=2.0,
+)
+async def pv_sight(
+    snaps: list[dict[str, Any]] | None, origin: str = ""
+) -> dict[str, Any]:
+    """v4.19: the vision lane. The session's canvas snapshots ride the
+    session JSON as base64 data URLs (fetched["session"]["snapshots"]) —
+    real frames of what the player saw, not just counts. Until v4.19 the
+    analysis only ever met their len/tags: the v1.9 camera bug was plainly
+    visible in the frames and still misdiagnosed twice (v1.6/v1.7 band
+    theory, then v1.18 radii guess). This activity shows up to SIGHT_MAX
+    frames to a vision-capable model and returns plain-text descriptions
+    for the verdict prompt (rendered by snapshot_block as the SNAPSHOT
+    OBSERVATIONS block). FAIL-OPEN by design: no snapshots, oversized
+    frames, a model/plugin problem — any failure returns an empty result
+    and the run proceeds text-only (the report records vision: false).
+    The image_url content part takes the data URL string directly, so no
+    decoding or storage is needed."""
+    await _ensure_manifest(origin)
+    from mistralai.workflows.plugins.mistralai import (
+        ChatCompletionRequest,
+        UserMessage,
+        chat_parse_to_model,
+    )
+
+    clean: list[dict[str, Any]] = []
+    for s in snaps or []:
+        if not isinstance(s, dict):
+            continue
+        d = s.get("data")
+        if not isinstance(d, str) or not d.startswith("data:image"):
+            continue
+        if len(d) > SIGHT_MAX_IMG_CHARS:
+            continue
+        try:
+            ms = int(s.get("ms") or 0)
+        except (TypeError, ValueError):
+            ms = 0
+        clean.append({"tag": str(s.get("tag") or "?")[:24], "ms": ms, "data": d})
+    if not clean:
+        return {"frames": [], "summary": "", "seen": 0}
+    if len(clean) > SIGHT_MAX:
+        # even spacing over the session; first + last always kept
+        pick: list[int] = []
+        step = (len(clean) - 1) / (SIGHT_MAX - 1)
+        for i in range(SIGHT_MAX):
+            idx = round(i * step)
+            if idx not in pick:
+                pick.append(idx)
+        clean = [clean[i] for i in pick]
+    parts: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": (
+                "These are frames captured from a game during a recorded "
+                "test session, in time order. For EACH frame describe "
+                "factually what is on screen: the character's position "
+                "relative to the visible area and obstacles, anything "
+                "overlapping or clipping, UI elements, anything broken or "
+                "misplaced. Then give a short overall summary. Be concrete "
+                "and visual; do not speculate about code."
+            ),
+        }
+    ]
+    for f in clean:
+        parts.append({"type": "text", "text": "Frame " + f["tag"] + " @ " + str(f["ms"]) + "ms:"})
+        parts.append({"type": "image_url", "image_url": f["data"]})
+    req = ChatCompletionRequest(
+        model=SIGHT_MODEL,
+        messages=[UserMessage(content=parts)],
+        temperature=0,
+        max_tokens=1200,
+    )
+    out: SightOut = await chat_parse_to_model(SightOut, req)
+    frames = [
+        {"tag": f.tag, "ms": f.ms, "desc": (f.desc or "")[:400]}
+        for f in (out.frames or [])
+        if (f.desc or "").strip()
+    ]
+    return {
+        "frames": frames,
+        "summary": (out.summary or "")[:800],
+        "seen": len(clean),
+    }
+
+
+@workflows.activity(
     name="pv-verdict",
     start_to_close_timeout=timedelta(seconds=180),
     retry_policy_max_attempts=2,
@@ -1386,6 +1512,7 @@ async def pv_verdict(
     context_md: str | None = None,
     qa_block: str | None = None,
     ro_block: str | None = None,
+    snap_block: str | None = None,
     origin: str = "",
 ) -> Verdict:
     """The model call: classify + (for app_fix) propose gated exact edits.
@@ -1394,7 +1521,9 @@ async def pv_verdict(
     a verbatim excerpt of the closest source region) so a second pass can
     repair its own anchors instead of failing blindly (both refusal shapes).
     v4.9.5: `context_md` is the repo's AGENT-CONTEXT.md, rendered as the
-    prompt's GAME CONTEXT block (the context-keeper directive)."""
+    prompt's GAME CONTEXT block (the context-keeper directive).
+    v4.19: `snap_block` carries the SNAPSHOT OBSERVATIONS rendered from
+    pv_sight's frame descriptions (vision lane). The call stays text-only."""
     await _ensure_manifest(origin)
     from mistralai.workflows.plugins.mistralai import (
         ChatCompletionRequest,
@@ -1412,6 +1541,8 @@ async def pv_verdict(
         content += "\n" + qa_block
     if ro_block:
         content += "\n" + ro_block
+    if snap_block:
+        content += "\n" + snap_block
     if feedback:
         content += "\n" + feedback
     req = ChatCompletionRequest(
@@ -2385,6 +2516,20 @@ class BrainWorkflow:
             qa_answers = [a for a in (qa_ctx or {}).get("answers", []) if isinstance(a, dict)]
             qa_block = _qa_block(qa_ctx or {})
         ro_block = _ro_block(fetched.get("ro_srcs") or {})
+        # v4.19: the vision lane — pv_sight describes the session's real
+        # canvas snapshots with a vision model. Fail-open by design: any
+        # failure here degrades to a text-only run and never blocks it
+        # (the report records vision: false so degraded runs are visible).
+        sight: dict[str, Any] = {}
+        try:
+            sight = await pv_sight(
+                (fetched.get("session") or {}).get("snapshots"), origin=o
+            )
+        except Exception:
+            sight = {}
+        snap_block = snapshot_block(sight)
+        ctx_fields["vision"] = bool(sight.get("frames"))
+        ctx_fields["snapshot_frames_seen"] = int(sight.get("seen") or 0)
         verdict = await pv_verdict(
             metrics,
             fetched["app_src"],
@@ -2400,6 +2545,7 @@ class BrainWorkflow:
             context_md=fetched.get("context_md"),
             qa_block=qa_block,
             ro_block=ro_block,
+            snap_block=snap_block,
             eng_src=fetched.get("eng_src"),
             eng_label=fetched.get("eng_label"),
         origin=o)
@@ -2560,6 +2706,7 @@ class BrainWorkflow:
                     context_md=fetched.get("context_md"),
                     qa_block=qa_block,
                     ro_block=ro_block,
+                    snap_block=snap_block,
                     eng_src=fetched.get("eng_src"),
                     eng_label=fetched.get("eng_label"),
                 origin=o)
