@@ -1466,7 +1466,8 @@ async def pv_sight(
                 "factually what is on screen: the character's position "
                 "relative to the visible area and obstacles, anything "
                 "overlapping or clipping, UI elements, anything broken or "
-                "misplaced. Then give a short overall summary. Be concrete "
+                "misplaced. Keep each frame description to 2-3 short "
+                "sentences. Then give a short overall summary. Be concrete "
                 "and visual; do not speculate about code."
             ),
         }
@@ -1478,7 +1479,10 @@ async def pv_sight(
         model=SIGHT_MODEL,
         messages=[UserMessage(content=parts)],
         temperature=0,
-        max_tokens=1200,
+        # generous on purpose: the first v4.19 test truncated the guided
+        # JSON mid-string at max_tokens=1200 (EOF at ~6.5 KB of output,
+        # pydantic json_invalid) — 6 frames need more than that.
+        max_tokens=3000,
     )
     out: SightOut = await chat_parse_to_model(SightOut, req)
     frames = [
