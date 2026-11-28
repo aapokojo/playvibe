@@ -34,7 +34,14 @@ deployment}. Pipeline per session sid:
      - clean   -> stage done "no changes: everything as designed"
      - game_logic -> stage waiting + push + ONE in-game question (the
                   game's agent-qa route); the next brain run or
-                  on-demand agent flow consumes the player's answer
+                  on-demand agent flow consumes the player's answer.
+                  v4.17: a game_logic verdict asks AT MOST ONCE per
+                  session — when the run consumes an answer to this
+                  sid's own question, the player has already decided:
+                  record the standing choice in the report + a done
+                  note (the dev agent owns the engine lane) and never
+                  re-ask; re-asking an answered question loops the
+                  player forever on a decision they already gave
      - app_fix -> gate-check the model's edits (target evidence, unique
                   anchors, per-file lane), bump the single version
                   constant in the game's version file, push ONE atomic
@@ -2115,11 +2122,13 @@ class BrainWorkflow:
         # words steer the verdict and the model can NAME the real
         # mechanism instead of fabricating anchors in code it never saw.
         qa_block = ""
+        qa_answers: list[dict[str, Any]] = []
         if not data.dry_run:
             try:
                 qa_ctx = await pv_qa_consume()
             except Exception:
                 qa_ctx = {}
+            qa_answers = [a for a in (qa_ctx or {}).get("answers", []) if isinstance(a, dict)]
             qa_block = _qa_block(qa_ctx or {})
         ro_block = _ro_block(fetched.get("ro_srcs") or {})
         verdict = await pv_verdict(
@@ -2171,6 +2180,35 @@ class BrainWorkflow:
         if verdict.classification == "game_logic":
             question = verdict.question or verdict.fix_description or "Found something significant: see the report."
             opts = [str(o) for o in verdict.options][:4] or ["yes", "no"]
+            # v4.17: ask AT MOST ONCE per session. If this run consumed
+            # an answer to THIS sid's own question (<sid>-q), the player
+            # already decided this finding: an engine-side defect can
+            # never be resolved by another answer (the brain cannot edit
+            # it anyway), so record the standing choice, conclude done
+            # and prune the inbox — re-asking would loop the player on
+            # the very question they just answered.
+            prior = next((a for a in qa_answers if (a.get("id") or "") == f"{sid}-q"), None)
+            if prior is not None:
+                choice = str(prior.get("choice") or "").strip()[:80]
+                note = (
+                    "engine-side finding recorded — the player already answered (choice: "
+                    + (choice or "?")
+                    + "); the dev agent owns this lane"
+                )[:200]
+                await pv_stage(sid, "done", note)
+                await pv_report(sid, {
+                    "v": 1, "sid": sid, "classification": "game_logic",
+                    "version": metrics["version"], "metrics": {k: v for k, v in metrics.items() if k != "transcript"},
+                    "findings": findings, "reasoning": verdict.reasoning,
+                    "question": question, "options": opts, "player_choice": choice,
+                    **ctx_fields,
+                })
+                if not data.dry_run:
+                    await pv_notify(NOTIFY_TITLE, f"Engine-side finding recorded ({short}) — the player's choice is in the report; the dev agent owns it.", NOTIFY_TAG)
+                    # the answered ask is superseded by this conclusion
+                    await pv_qa_prune([])
+                    return BrainResult(sid=sid, stage="done", note=note, classification="game_logic", findings=findings)
+                return BrainResult(sid=sid, stage="done", note=note + " [dry]", classification="game_logic", findings=findings)
             note = ("waiting for the answer: " + (findings[0] if findings else question))[:200]
             await pv_stage(sid, "waiting", note)
             await pv_report(sid, {
