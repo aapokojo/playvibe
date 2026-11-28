@@ -156,13 +156,22 @@ export interface PlayvibeBrain {
       implements today — the Vite/Vercel asset pattern; validated,
       fails named on anything else) */
   liveVerify: "bundle-filename";
+  /** v4.18 (brain): OPTIONAL SECOND editable lane — the game's engine
+      file. When set, the brain fetches it EDITABLE alongside appPath:
+      edits may name either file (target_evidence must live in one of
+      them, anchors stay unique per file, size/balance gates run per
+      file), ONE atomic commit may touch both, and reverts invert
+      engine edits too. Omit it and appPath stays the only editable
+      file exactly as before. */
+  enginePath?: string;
   /** v4.15: full-codebase read context — when true the brain fetches
       ONE tarball of the repo's main branch and renders EVERY text
       source file into its read-only prompt context (on top of
       readOnlyPaths). Noise is filtered out (binaries, lockfiles,
       build output, .env*), each file caps at 60 KB and the whole
-      fetch at contextMaxKB. The apply gate is unchanged: only appPath
-      stays editable. Optional, default false. */
+      fetch at contextMaxKB. The apply gate is unchanged: the editable
+      set is appPath plus brain.enginePath when declared. Optional,
+      default false. */
   fullContext?: boolean;
   /** total budget in KB for the full-context fetch; optional, default
       350 (clamped to at least 50) */
@@ -300,13 +309,20 @@ export const EXAMPLE_MANIFEST: PlayvibeManifestSeed = {
     notifyTag: "pv-analysis",
     versionScheme: "vNN-patch",
     liveVerify: "bundle-filename",
+    /* v4.18 (brain): the OPTIONAL second editable lane — the engine
+       file. Surgical engine-side fixes (a camera band clamp, a
+       constant, a formula line) become gated app_fix verdicts that
+       name this file in their edits. Omit the field when the brain
+       must stay out of the engine. */
+    enginePath: "src/engine.ts",
     /* v4.15: full-codebase read context — the brain fetches the WHOLE
        repo (one tarball of main) into its prompt as read-only context:
        noise and secret-bearing files filtered, 60 KB/file and
        brain.contextMaxKB caps (default 350), code directories spent
        first. contextExclude skips game-specific asset/noise paths.
-       Edit rights are unchanged: appPath stays the only editable
-       file and target_evidence must still quote it alone. */
+       Edit rights are the declared lanes: appPath always, plus
+       brain.enginePath when set; target_evidence must live in one of
+       the editable files. */
     fullContext: true,
     contextExclude: ["assets-src", "public/audio"],
   },
