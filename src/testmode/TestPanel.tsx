@@ -9,7 +9,9 @@
    queue) are LOCAL panel state via ./fixes with their own 30 s poll.
    Player-spec design notes:
    - AGENT + its contextual action band (ANALYZE NOW & co) on top
-     with the task at hand; QUEUE under it with the NEXT-UP row first;
+     with the task at hand (the AGENT question inbox renders inside
+     the AGENT band, under its status line); QUEUE under it with the
+     NEXT-UP row first;
      FIXES last, NEWEST ON TOP inside its own ~2-3-row scrollable
      viewport.
    - QUEUE shows WAITING items only — AGENT is the single surface for
@@ -30,7 +32,9 @@
    - REC (mic + engine audio + wire log + frames), STOP &
      upload-to-agent status, the notification toggle (it serves only the
      agent loop, so it lives here, not on the home screen), and the
-     agent question inbox. Toggled by the host game (the reference game
+     agent question inbox (the questions render INSIDE the AGENT band,
+     in context with the status line, not at the bottom of the panel).
+     Toggled by the host game (the reference game
      uses 5 taps on the version number in the info screen; ?test=1 also
      works).
    - Anchored with safe-area insets — a phone answer reported the notch
@@ -86,6 +90,7 @@ const STAGE_EN: Record<string, string> = {
   fixing: "fix in progress",
   reverting: "revert in progress",
   waiting: "waiting for your answer",
+  answered: "answer received",
   done: "done",
 };
 
@@ -319,8 +324,8 @@ export function TestPanel({
                 static controls on top (REC/STOP; notification toggle in
                 the header),
                 live state in the middle (upload/transcribe/kick flashes, the
-                brain's stage, agent questions), transient actions at the
-                bottom that appear only when relevant */}
+                brain's stage), transient actions at the bottom that appear
+                only when relevant */}
             {/* the notification toggle lives in the header as a
                 🔔/🔕 icon — see the header row above */}
             {/* ONE state at a time in the agent band. The flash
@@ -364,6 +369,39 @@ export function TestPanel({
                 }
                 return <div className="mt-1 leading-snug text-[#b08cd8] opacity-60">no active analysis</div>;
               })()}
+              {/* agent question inbox: renders INSIDE the AGENT band — the
+                  questions read in context with the status they belong to
+                  (the task at hand), not stranded at the bottom of the
+                  panel behind QUEUE and FIXES. Fixed options + free text,
+                  anonymous. */}
+              {qaList.length > 0 && (
+                <div className="mt-1.5 border-t border-[#8a3fd9]/40 pt-1">
+                  <div className="mb-1 font-bold text-[#00f0ff]">AGENT ASKS</div>
+                  {qaList.map((q) => (
+                    <div key={q.id} className="mb-2">
+                      <div className="mb-1 leading-snug text-[#f2f0ff]">{q.text}</div>
+                      <div className="flex flex-col gap-1">
+                        {q.opts.map((o) => (
+                          <button
+                            key={o}
+                            onClick={() => {
+                              qaAnswer(q.id, o).catch(() => {});
+                            }}
+                            className="rounded border border-[#00f0ff] bg-[#0a0718] px-2 py-1 text-left text-[#00f0ff] transition-transform hover:-translate-y-0.5 active:bg-[#00f0ff] active:text-[#0a0718]"
+                          >
+                            {o}
+                          </button>
+                        ))}
+                        <QAInput
+                          onSend={(v) => {
+                            qaAnswer(q.id, v).catch(() => {});
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             {/* transient actions, contextual only — at the TOP next to the
                 AGENT state per the player spec (the task at hand reads
@@ -530,35 +568,6 @@ export function TestPanel({
               </div>
               );
             })()}
-            {/* agent question inbox: fixed options + free text, anonymous */}
-            {qaList.length > 0 && (
-              <div className="mt-1.5 border-t border-[#8a3fd9]/50 pt-1">
-                <div className="mb-1 font-bold text-[#00f0ff]">AGENT ASKS</div>
-                {qaList.map((q) => (
-                  <div key={q.id} className="mb-2">
-                    <div className="mb-1 leading-snug text-[#f2f0ff]">{q.text}</div>
-                    <div className="flex flex-col gap-1">
-                      {q.opts.map((o) => (
-                        <button
-                          key={o}
-                          onClick={() => {
-                            qaAnswer(q.id, o).catch(() => {});
-                          }}
-                          className="rounded border border-[#00f0ff] bg-[#0a0718] px-2 py-1 text-left text-[#00f0ff] transition-transform hover:-translate-y-0.5 active:bg-[#00f0ff] active:text-[#0a0718]"
-                        >
-                          {o}
-                        </button>
-                      ))}
-                      <QAInput
-                        onSend={(v) => {
-                          qaAnswer(q.id, v).catch(() => {});
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
             {/* the live work-state lives in the AGENT section (one agent surface) */}
               </>
             )}
