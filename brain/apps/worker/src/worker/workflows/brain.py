@@ -1389,3 +1389,933 @@ async def pv_apply(
         f"Auto-fix from test session {sid} via the playvibe brain workflow.\n"
         f"Findings: {findings}\n"
         f"Session: {metrics.get('version')} {metrics.get('mode')}, "
+        f"{metrics.get('durationMs')} ms, {metrics.get('events')} events, "
+        f"{metrics.get('wire')} wire, booms {metrics.get('booms')}, "
+        f"mid-turn loads {len(metrics.get('midTurnLoads') or [])}, "
+        f"pump stalls {len(metrics.get('pumpStalls') or [])}.\n"
+        f"Lane: {APP_LABEL} only (testmode read-only; engine/net untouched); {VER_LABEL} {cur} -> {nxt}.\n"
+        f"Files: {', '.join(changed)}. Edits: {applied} exact-string replacement(s)."
+    )
+
+    # v4.4: ONE atomic commit via the git data API (blobs -> tree on HEAD's
+    # base_tree -> commit -> fast-forward ref PATCH); a raced push fails
+    # the ref update honestly instead of clobbering what landed meanwhile
+    async with httpx.AsyncClient(timeout=60, headers=_PV_UA, follow_redirects=True) as c:
+        h = _gh_headers(tok)
+        rr = await c.get(f"{GITHUB}/{REPO}/git/ref/heads%2Fmain", headers=h)
+        if rr.status_code != 200:
+            return {"ok": False, "reason": f"github ref HTTP {rr.status_code}"}
+        head = rr.json()["object"]["sha"]
+        rc = await c.get(f"{GITHUB}/{REPO}/git/commits/{head}", headers=h)
+        if rc.status_code != 200:
+            return {"ok": False, "reason": f"github commit HTTP {rc.status_code}"}
+        # v4.9.1: GitHub's git/commits response no longer nests a "commit"
+        # object (tree is top-level now) - the first live revert crashed on
+        # KeyError here. Accept both shapes; fail honestly with a snippet.
+        d = rc.json()
+        tree_obj = (d.get("commit") or d).get("tree") or {}
+        base_tree = str(tree_obj.get("sha") or "")
+        if not base_tree:
+            return {"ok": False, "reason": "github commit tree missing: " + str(list(d.keys()))[:200]}
+        tree_items = []
+        for label in changed:
+            rb = await c.post(
+                f"{GITHUB}/{REPO}/git/blobs",
+                headers=h,
+                json={"content": sources[label], "encoding": "utf-8"},
+            )
+            if rb.status_code not in (200, 201):
+                return {"ok": False, "reason": f"github blob HTTP {rb.status_code} ({label})"}
+            tree_items.append({
+                "path": FILE_PATHS[label],
+                "mode": "100644",
+                "type": "blob",
+                "sha": rb.json()["sha"],
+            })
+        rt = await c.post(
+            f"{GITHUB}/{REPO}/git/trees",
+            headers=h,
+            json={"base_tree": base_tree, "tree": tree_items},
+        )
+        if rt.status_code not in (200, 201):
+            return {"ok": False, "reason": f"github tree HTTP {rt.status_code}"}
+        rcm = await c.post(
+            f"{GITHUB}/{REPO}/git/commits",
+            headers=h,
+            json={"message": message, "tree": rt.json()["sha"], "parents": [head]},
+        )
+        if rcm.status_code not in (200, 201):
+            return {"ok": False, "reason": f"github commit HTTP {rcm.status_code}"}
+        ru = await c.patch(
+            f"{GITHUB}/{REPO}/git/refs/heads%2Fmain",
+            headers=h,
+            json={"sha": rcm.json()["sha"], "force": False},
+        )
+        if ru.status_code not in (200, 201):
+            return {"ok": False, "reason": f"github ref update HTTP {ru.status_code}"}
+        commit_sha = str(rcm.json().get("sha") or "")[:10]
+    return {"ok": True, "reason": "", "new_version": nxt, "files": changed, "commit": commit_sha}
+
+
+async def pv_live_url() -> str | None:
+    """Current served bundle path (Vite content-hashed filename)."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
+        r = await c.get(GAME)
+        m = re.search(r"/assets/index-[A-Za-z0-9_.-]+[.]js", r.text)
+        return m.group(0) if m else None
+
+
+@workflows.activity(name="pv-live-url", retry_policy_max_attempts=2)
+async def pv_live_url_activity() -> "str | None":
+    return await pv_live_url()
+
+
+@workflows.activity(
+    name="pv-live-verify",
+    start_to_close_timeout=timedelta(seconds=400),
+    retry_policy_max_attempts=1,
+)
+async def pv_live_verify(new_version: str, pre_bundle_url: str | None = None) -> dict[str, Any]:
+    """Wait until the game origin serves the new deploy.
+
+    v2: the v1 check searched the bundle for the raw version literal, but
+    the obfuscator can move the version strings into its ENCODED string
+    table (an early deployed build contained no raw "vNN.N" at
+    all), so both real verifications failed while the deploys were already
+    live. A bundle FILENAME change from the pre-push one is the robust
+    signal: Vite content-hashes the filename, and the only push in
+    flight came from this run. The literal check stays as a bonus."""
+    import asyncio
+
+    import httpx
+
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
+        for _ in range(16):  # ~5 min; Vercel deploys in ~60 s
+            r = await c.get(GAME)
+            m = re.search(r"/assets/index-[A-Za-z0-9_.-]+[.]js", r.text)
+            if m:
+                if pre_bundle_url and m.group(0) != pre_bundle_url:
+                    return {"ok": True, "bundle": m.group(0), "by": "filename"}
+                b = await c.get(GAME + m.group(0))
+                if b.status_code == 200 and new_version in b.text:
+                    return {"ok": True, "bundle": m.group(0), "by": "literal"}
+            await asyncio.sleep(20)
+    return {"ok": False, "reason": "live deploy not visible yet (5+ min)"}
+
+
+@workflows.activity(
+    name="pv-notify",
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy_max_attempts=2,
+)
+async def pv_notify(title: str, body: str, tag: str) -> str:
+    """Push to the player's devices via /api/notify (fail-soft, named)."""
+    import httpx
+
+    tok = _env("agentToken")
+    if not tok:
+        return "skip: agent token missing"
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
+        r = await c.post(
+            NOTIFY_URL,
+            json={
+                "token": tok,
+                "title": title[:120],
+                "body": body[:400],
+                "url": "/",
+                "tag": tag[:40],
+            },
+        )
+        if r.status_code != 200:
+            return f"notify HTTP {r.status_code}"
+        d = r.json() if r.text else {}
+        return f"sent {d.get('sent', '?')} gone {d.get('gone', '?')}"
+
+
+@workflows.activity(
+    name="pv-ask",
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy_max_attempts=2,
+)
+async def pv_ask(qid: str, text: str, opts: list[str]) -> str:
+    """Pose ONE in-game question via /api/agentqa (fail-soft, named)."""
+    import httpx
+
+    tok = _env("agentToken")
+    if not tok:
+        return "skip: agent token missing"
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
+        r = await c.post(
+            QA_URL,
+            json={"action": "ask", "token": tok, "id": qid[:64], "text": text[:300], "opts": opts[:4]},
+        )
+        return "ok" if r.status_code == 200 else f"ask HTTP {r.status_code}"
+
+
+@workflows.activity(
+    name="pv-qa-consume",
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy_max_attempts=2,
+)
+async def pv_qa_consume() -> dict[str, Any]:
+    """v4.14: collect the player's pending panel answers via /api/agentqa
+    consume (the agent lane). Consume is a SIDE EFFECT — it hands the
+    answers over and clears the inbox — so only live runs call it. The
+    response carries both docs: every answer paired with its asked
+    question. Fail-soft: a failed consume renders no answers, never a
+    failed run."""
+    import httpx
+
+    tok = _env("agentToken")
+    if not tok:
+        return {"answers": [], "questions": []}
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
+        r = await c.post(QA_URL, json={"action": "consume", "token": tok})
+        if r.status_code != 200:
+            return {"answers": [], "questions": []}
+        d = r.json() if r.text else {}
+    return {
+        "answers": [a for a in (d.get("answers") or []) if isinstance(a, dict)],
+        "questions": [q for q in (d.get("questions") or []) if isinstance(q, dict)],
+    }
+
+
+@workflows.activity(
+    name="pv-report",
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy_max_attempts=2,
+)
+async def pv_report(sid: str, report: dict[str, Any]) -> str:
+    """Persist the session report (report-<sid>, 30 d TTL in the store)."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
+        await _kv_put(c, f"{REPORT_PREFIX}{sid}", json.dumps(report, ensure_ascii=False, default=str))
+    return "ok"
+
+
+@workflows.activity(
+    name="pv-target-check",
+    start_to_close_timeout=timedelta(seconds=60),
+    retry_policy_max_attempts=1,
+)
+async def pv_target_check(transcript: str, fix: str, edits: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """v4.4: cheap second opinion after a verified push - did the applied
+    edits target what the narration actually asked for? Both false-verified
+    rounds (an invented nonexistent theme-label key, a wrong-label rewrite)
+    would have been flagged here. Advisory only: None = unknown."""
+    from mistralai.workflows.plugins.mistralai import (
+        ChatCompletionRequest,
+        UserMessage,
+        chat_parse_to_model,
+    )
+
+    if not str(transcript or "").strip() or not edits:
+        return None
+    edits_txt = "\n".join(
+        f"- file {str(ed.get('file') or APP_LABEL)}: "
+        f"{str(ed.get('old') or '')[:200]!r} -> {str(ed.get('new') or '')[:200]!r}"
+        for ed in edits[:10]
+        if isinstance(ed, dict)
+    )
+    req = ChatCompletionRequest(
+        model=VERDICT_MODEL,
+        # v4.9.8: UserMessage is a pydantic BaseModel — the positional call
+        # UserMessage("...") raised TypeError on EVERY run since v4.4, the
+        # try/except swallowed it and on_target was always None: the
+        # second-opinion gate was dead while reporting "advisory: unknown".
+        # Found via execution logs (activity pv-target-check attempt 1
+        # failed) after on_target: null appeared in five straight reports.
+        messages=[UserMessage(content=(
+            "You are auditing an autonomous code-fix loop. The player narrated\n"
+            "a test session; an agent then applied these edits:\n"
+            + edits_txt
+            + "\n\nClaimed fix: " + (fix or "?")
+            + "\n\nNarration transcript (ground truth):\n"
+            + str(transcript)[:8000]
+            + "\n\non_target is true ONLY if the edits change the UI text/element the\n"
+            "narration actually asked to change (spoken narration is paraphrase:\n"
+            '"New match" narration means the new-match button labeled "New").\n'
+            "on_target is false if the narration asked for a DIFFERENT label,\n"
+            "button or element than the ones edited. `why`: one short English\n"
+            "sentence naming the mismatch.\n"
+        ))],
+        temperature=0,
+        max_tokens=300,
+    )
+    try:
+        tc = await chat_parse_to_model(TargetCheck, req)
+    except Exception:
+        return None
+    return {"on_target": bool(tc.on_target), "why": str(tc.why or "")[:300]}
+
+
+@workflows.activity(
+    name="pv-fetch-sources",
+    start_to_close_timeout=timedelta(seconds=120),
+    retry_policy_max_attempts=3,
+    retry_policy_backoff_coefficient=2.0,
+)
+async def pv_fetch_sources() -> dict[str, Any]:
+    """v4.9: repo sources only - the revert lane reuses
+    the exact gate/apply/verify pipeline without a recorded session
+    (old sessions expire from the store; a stored fix needs only the
+    sources)."""
+    import base64
+
+    import httpx
+
+    tok = _env("githubToken")
+    if not tok:
+        raise workflows.WorkflowError("github_token_missing", non_retryable=True)
+    async with httpx.AsyncClient(timeout=60, headers=_PV_UA, follow_redirects=True) as c:
+        srcs: dict[str, str] = {}
+        shas: dict[str, str] = {}
+        for name, fpath in (
+            (APP_LABEL, APP_PATH),
+            ("TestPanel.tsx", PANEL_PATH),
+            (VER_LABEL, VER_PATH),
+        ):
+            r = await c.get(f"{GITHUB}/{REPO}/contents/{fpath}?ref=main", headers=_gh_headers(tok))
+            if r.status_code == 200:
+                d = r.json()
+                srcs[name] = base64.b64decode(d.get("content", "")).decode("utf-8")
+                shas[name] = str(d.get("sha") or "") or ""
+        # v4.13: only the editable app file + version bump spot are
+        # REQUIRED; the panel read-only context may be absent (a game
+        # that installs the playvibe package has no src/testmode in-repo)
+        if not all(srcs.get(k) for k in (APP_LABEL, VER_LABEL)):
+            raise workflows.WorkflowError("sources_missing", non_retryable=True)
+        return {
+            "app_src": srcs[APP_LABEL],
+            "app_sha": shas[APP_LABEL],
+            "panel_src": srcs.get("TestPanel.tsx") or "",
+            "panel_sha": shas.get("TestPanel.tsx") or "",
+            "ver_src": srcs[VER_LABEL],
+            "ver_sha": shas[VER_LABEL],
+            "has_token": True,
+        }
+
+
+@workflows.activity(
+    name="pv-fixlog-read",
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy_max_attempts=2,
+)
+async def pv_fixlog_read() -> list[dict[str, Any]]:
+    """The fix log (via the broker)."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
+        d = await _kv_get_json(c, FIXLOG_KEY) or {}
+        fixes = d.get("fixes")
+        return [f for f in fixes if isinstance(f, dict)] if isinstance(fixes, list) else []
+
+
+def _fixlog_trim(fixes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Newest 40; edits kept only on the newest 15 (display rows do not
+    need old/new pairs and the value must stay far under the cap)."""
+    out = fixes[-40:]
+    keep = 15
+    for i, f in enumerate(out):
+        if i >= len(out) - keep:
+            break
+        f["edits"] = []
+    return out
+
+
+@workflows.activity(
+    name="pv-fixlog-add",
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy_max_attempts=2,
+)
+async def pv_fixlog_add(entry: dict[str, Any]) -> str:
+    """Append/replace one fix entry; ids are the fix versions (unique per
+    push). The ts is stamped HERE (activity side): workflow code must
+    stay deterministic."""
+    import time
+
+    import httpx
+
+    entry = dict(entry)
+    entry["ts"] = int(1000 * time.time())
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
+        d = await _kv_get_json(c, FIXLOG_KEY) or {}
+        fixes = [f for f in (d.get("fixes") or []) if isinstance(f, dict)]
+        fixes = [f for f in fixes if str(f.get("id") or "") != str(entry.get("id") or "")]
+        fixes.append(entry)
+        await _kv_put(c, FIXLOG_KEY, json.dumps({"v": 1, "fixes": _fixlog_trim(fixes)}, ensure_ascii=False))
+    return f"logged {entry.get('id')}"
+
+
+@workflows.activity(
+    name="pv-fixlog-reverted",
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy_max_attempts=2,
+)
+async def pv_fixlog_reverted(fix_id: str, revert_version: str) -> str:
+    """Mark one fix entry reverted (the panel row shows it)."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
+        d = await _kv_get_json(c, FIXLOG_KEY) or {}
+        fixes = [f for f in (d.get("fixes") or []) if isinstance(f, dict)]
+        hit = 0
+        for f in fixes:
+            if str(f.get("id") or "") == str(fix_id):
+                f["reverted"] = True
+                f["reverted_by"] = str(revert_version)[:16]
+                hit += 1
+        if hit:
+            await _kv_put(c, FIXLOG_KEY, json.dumps({"v": 1, "fixes": fixes}, ensure_ascii=False))
+    return f"marked {hit}"
+
+
+@workflows.activity(
+    name="pv-queue-advance",
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy_max_attempts=1,
+)
+async def pv_queue_advance(result_stage: str) -> str:
+    """v4.9: tell the site this run finished - the queue's
+    next waiting item starts from the SITE side (/api/fixes advance; the
+    brain holds no Mistral API key, so the workflow execute call is the
+    site's to make). Fail-soft by construction: a dead advance must
+    never invalidate an otherwise-complete run."""
+    import httpx
+
+    tok = _pv_token()
+    if not tok:
+        return "skip: agent token missing"
+    async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
+        r = await c.post(
+            QUEUE_ADVANCE,
+            json={"action": "advance", "token": tok, "result": str(result_stage)[:20]},
+        )
+        return "ok" if r.status_code == 200 else f"advance HTTP {r.status_code}"
+
+
+# ------------------------------------------------------------------ workflow
+
+
+# v4.14: the workflow's ROUTING IDENTIFIER is the package constant
+# "playvibe-brain" — every game's deployment registers the same
+# identifier, and the game's kick disambiguates the target deployment
+# with `deployment_name` in the execute body. No per-game value lives
+# in this file.
+@workflows.workflow.define(
+    name="playvibe-brain",
+    workflow_display_name="Playvibe Brain",
+    workflow_description=(
+        "On-demand playvibe test-session analysis: fetch session JSON + "
+        "transcript via the game's store broker (Upstash Redis store, "
+        "textdb fallback for old sids), run the deterministic ritual, "
+        "classify with a Mistral model, and either fix the App lane "
+        "autonomously (push + live-verify + version bump) or ask the "
+        "player in-game."
+    ),
+)
+class BrainWorkflow:
+    @workflows.workflow.entrypoint
+    async def run(self, data: BrainInput) -> BrainResult:
+        # v4.9.1 crash guard: an exception anywhere below used to strand the
+        # queue item "processing" for the full 20-min stale window (the first
+        # live revert KeyError did exactly that). Mark the stage failed and
+        # advance the queue honestly, THEN re-raise.
+        try:
+            # v4.14: the game origin comes from the run input — the ONE
+            # per-game bootstrap value; a missing origin fails the run
+            # named before any store read or model call. The workflow body
+            # runs in the orchestrator and activities in worker processes,
+            # so the origin travels as an ACTIVITY ARGUMENT — a module
+            # global set here never reaches the workers.
+            origin_in = str(getattr(data, "origin", "") or "").strip().rstrip("/")
+            if not origin_in.startswith(("http://", "https://")):
+                raise workflows.WorkflowError(
+                    "origin_missing: pass the game origin in the run input",
+                    non_retryable=True,
+                )
+            # v4.10: EVERY run loads the game's manifest FIRST - the
+            # pipeline's repo/paths/keys/routes/env names come from it; a
+            # bad manifest fails the run NAMED before any store read.
+            await pv_load_manifest(origin_in)
+            # v4.9: the revert lane - a player-requested revert is
+            # deterministic: the stored forward edits invert and run through
+            # the exact same gate/apply/verify pipeline, no model call.
+            if data.action == "revert" and data.fix_id:
+                r = await self._revert(data)
+                if not data.dry_run:
+                    try:
+                        await pv_queue_advance(r.stage[:20])
+                    except Exception:
+                        pass
+                return r
+            r = await self._analyze(data)
+            # the analysis queue - after every finished run, tell
+            # the site; if waiting items remain there, IT starts the next one
+            if not data.dry_run:
+                try:
+                    await pv_queue_advance(r.stage[:20])
+                except Exception:
+                    pass
+            return r
+        except Exception as e:
+            try:
+                if not data.dry_run and getattr(data, "sid", ""):
+                    await pv_stage(data.sid, "error", f"run failed: {str(e)[:120]}")
+                if not data.dry_run:
+                    await pv_queue_advance("failed")
+            except Exception:
+                pass
+            raise
+
+    async def _analyze(self, data: BrainInput) -> BrainResult:
+        sid = data.sid
+        await pv_stage(sid, "analyzing", "fetching session from the store")
+        # a crashed activity used to fail the whole run with
+        # the state line stranded on its fetching placeholder forever.
+        # Every hard pipeline failure must surface in the state doc as an
+        # honest "error" stage (the client renders unknown stages with
+        # their note) before the run itself fails.
+        try:
+            fetched = await pv_fetch(sid)
+        except Exception as e:
+            reason = (str(e) or type(e).__name__ or "unknown error")[:120]
+            await pv_stage(sid, "error", f"session fetch failed: {reason}")
+            raise
+        metrics = analyze_session(
+            fetched["session"],
+            fetched["transcript"],
+            key_events=tuple(_m("analysis.keyEvents") or ("boom",)),
+            heartbeat=tuple(_m("analysis.heartbeat") or ("push-live",)),
+        )
+        short = f"{metrics['events']} events, {metrics['wire']} wire, {metrics['booms']} key events"
+        # v4.9.5 (context keeper): AGENT-CONTEXT.md freshness advisory.
+        # Report-only BY DESIGN (advisory first): lastVerifiedAt older than
+        # the live version literal means the shipping lane skipped the
+        # same-commit context update — flagged for the dev lane, never a
+        # gate (the run itself must not depend on the file's freshness).
+        ctx_ver = context_last_verified(fetched.get("context_md"))
+        ctx_stale = ""
+        if ctx_ver:
+            live_m = re.search(r'=\s*"(v\d+(?:\.\d+)?)"', str(fetched.get("ver_src") or ""))
+            live_v = live_m.group(1) if live_m else str(metrics.get("version") or "")
+            if live_v and live_v != ctx_ver:
+                ctx_stale = (
+                    f"{CONTEXT_PATH} not verified against {live_v} "
+                    f"(lastVerifiedAt {ctx_ver})"
+                )
+        ctx_fields: dict[str, Any] = {
+            "context_last_verified": ctx_ver,
+            "context_stale": bool(ctx_stale),
+        }
+        await pv_stage(sid, "analyzing", short)
+        # v4.14: consume the player's pending panel answers BEFORE
+        # classifying (consume is a side effect — it clears the inbox —
+        # so dry runs skip it) and render them, plus the manifest's
+        # read-only sources, into the verdict prompt: the player's own
+        # words steer the verdict and the model can NAME the real
+        # mechanism instead of fabricating anchors in code it never saw.
+        qa_block = ""
+        if not data.dry_run:
+            try:
+                qa_ctx = await pv_qa_consume()
+            except Exception:
+                qa_ctx = {}
+            qa_block = _qa_block(qa_ctx or {})
+        ro_block = _ro_block(fetched.get("ro_srcs") or {})
+        verdict = await pv_verdict(
+            metrics,
+            fetched["app_src"],
+            fetched.get("panel_src"),
+            fetched.get("ctl_src"),
+            fetched.get("qa_src"),
+            fetched.get("recent_commits") or [],
+            context_md=fetched.get("context_md"),
+            qa_block=qa_block,
+            ro_block=ro_block,
+        )
+        # PHASE 2 — the model SOLVES the fix inside its
+        # reasoning field but the guided-JSON schema makes it commit
+        # `edits` BEFORE that field, so a diagnosis that needs working
+        # out arrives with edits=[] (six sessions and counting). When
+        # phase 1 commits to an app_fix but emits no edits, give the
+        # committed diagnosis a dedicated edits-only emission round.
+        if verdict.classification == "app_fix" and not list(verdict.edits or []):
+            await pv_stage(sid, "fixing", (verdict.fix_description or "fix")[:120])
+            el = await pv_edits(
+                verdict.fix_description,
+                verdict.target_evidence,
+                fetched["app_src"],
+                None,
+                context_md=fetched.get("context_md"),
+                transcript=str(fetched.get("transcript") or ""),
+            )
+            verdict = verdict.model_copy(update={"edits": list(el.edits or [])})
+
+        findings = [str(f) for f in verdict.findings]
+        if verdict.classification == "clean":
+            note = "no changes: " + (findings[0] if findings else "everything as designed")
+            await pv_stage(sid, "done", note[:200])
+            await pv_report(sid, {
+                "v": 1, "sid": sid, "classification": "clean",
+                "version": metrics["version"], "metrics": {k: v for k, v in metrics.items() if k != "transcript"},
+                "findings": findings, "reasoning": verdict.reasoning, "transcriptWords": len((fetched["transcript"] or "").split()),
+                **ctx_fields,
+            })
+            if not data.dry_run:
+                await pv_notify(NOTIFY_TITLE, f"Analysis done ({short}): everything as designed.", NOTIFY_TAG)
+                return BrainResult(sid=sid, stage="done", note=note, classification="clean", findings=findings)
+            return BrainResult(sid=sid, stage="done", note=note + " [dry]", classification="clean", findings=findings)
+
+        if verdict.classification == "game_logic":
+            question = verdict.question or verdict.fix_description or "Found something significant: see the report."
+            opts = [str(o) for o in verdict.options][:4] or ["yes", "no"]
+            note = ("waiting for the answer: " + (findings[0] if findings else question))[:200]
+            await pv_stage(sid, "waiting", note)
+            await pv_report(sid, {
+                "v": 1, "sid": sid, "classification": "game_logic",
+                "version": metrics["version"], "metrics": {k: v for k, v in metrics.items() if k != "transcript"},
+                "findings": findings, "reasoning": verdict.reasoning, "question": question, "options": opts,
+                **ctx_fields,
+            })
+            if not data.dry_run:
+                await pv_notify(NOTIFY_TITLE, "The analysis found something that would change the game: answer the question in the test panel.", NOTIFY_TAG)
+                await pv_ask(f"{sid}-q", question, opts)
+                return BrainResult(sid=sid, stage="waiting", note=note, classification="game_logic", findings=findings)
+            return BrainResult(sid=sid, stage="waiting", note=note + " [dry]", classification="game_logic", findings=findings)
+
+        # app_fix lane
+        fix = verdict.fix_description[:120] or f"{APP_LABEL} lane fix"
+        await pv_stage(sid, "fixing", fix)
+        # v2: snap the served bundle BEFORE the push: a filename change
+        # afterwards is the robust "new deploy is live" signal (see pv_live_verify)
+        pre_url = await pv_live_url_activity()
+        outcome = await pv_apply(sid, fetched, verdict.model_dump(), metrics, data.dry_run)
+        # v4: TWO feedback rounds instead of one. A past session proved one is not
+        # enough: the v3 retry repaired its anchors but then expressed the
+        # player's UI move as delete+insert pairs (new == "") and failed
+        # the edit-contract gate with no round left to learn from. Each
+        # round teaches the gate's actual complaint: anchor misses get the
+        # verbatim-excerpt feedback, contract violations get the move
+        # contract. Policy/size gates stay final; the exactly-once gate
+        # stays honest. Exhausted rounds fall through to the honest
+        # gate failure exactly as before.
+        verdict_used = verdict
+        retried = False
+        retries = 0
+        rescues = 0
+        # v4.6: every gate refusal is recorded into gate_history and
+        # named in the panel state note + the report - two past sessions
+        # both refused twice and ended in a degenerate empty proposal with
+        # the REAL refusal reasons lost, leaving nothing to diagnose from.
+        # A worn-down EMPTY re-proposal after real refusals gets ONE extra
+        # rescue round that re-teaches both the original gate complaint and
+        # the edit contract.
+        gate_history: list[dict[str, Any]] = []
+        while (
+            not outcome.get("ok")
+            and _retryable_gate(str(outcome.get("reason") or ""))
+        ):
+            reason_now = str(outcome.get("reason") or "")
+            gate_history.append({
+                "n": retries + 1,
+                "reason": reason_now[:160],
+                "file": str(outcome.get("file") or ""),
+                "offending": str(outcome.get("failed_old") or "")[:200],
+            })
+            if reason_now == "no edits" and retries >= 2 and rescues == 0:
+                rescues = 1
+            elif retries >= 2:
+                break
+            retries += 1
+            await pv_stage(
+                sid,
+                "fixing",
+                f"gate refused the proposal ({retries}): {reason_now[:70]}: re-proposing with feedback",
+            )
+            # v4.9.3: route the retry by failure class. An evidence-gate
+            # failure means the DIAGNOSIS located a site that is not in
+            # App.tsx — re-diagnose (phase 1, full context). Every other
+            # model-quality failure keeps the committed diagnosis and
+            # retries ONLY the emission (phase 2 with the gate's
+            # feedback), which is where the anchor work actually happens.
+            if reason_now.startswith("target evidence"):
+                verdict_r = await pv_verdict(
+                    metrics,
+                    fetched["app_src"],
+                    fetched.get("panel_src"),
+                    fetched.get("ctl_src"),
+                    fetched.get("qa_src"),
+                    fetched.get("recent_commits") or [],
+                    feedback=_retry_feedback(
+                        dict(outcome, gate_history=gate_history),
+                        fetched["app_src"],
+                        fetched.get("panel_src"),
+                    ),
+                    context_md=fetched.get("context_md"),
+                    qa_block=qa_block,
+                    ro_block=ro_block,
+                )
+                if verdict_r.classification != "app_fix":
+                    break
+                verdict_used = verdict_r
+                if not list(verdict_used.edits or []):
+                    el = await pv_edits(
+                        verdict_used.fix_description,
+                        verdict_used.target_evidence,
+                        fetched["app_src"],
+                        None,
+                        context_md=fetched.get("context_md"),
+                        transcript=str(fetched.get("transcript") or ""),
+                    )
+                    verdict_used = verdict_used.model_copy(update={"edits": list(el.edits or [])})
+            else:
+                el = await pv_edits(
+                    verdict_used.fix_description,
+                    str(verdict_used.target_evidence or ""),
+                    fetched["app_src"],
+                    _retry_feedback(
+                        dict(outcome, gate_history=gate_history),
+                        fetched["app_src"],
+                        fetched.get("panel_src"),
+                    ),
+                    context_md=fetched.get("context_md"),
+                    transcript=str(fetched.get("transcript") or ""),
+                )
+                verdict_used = verdict_used.model_copy(update={"edits": list(el.edits or [])})
+            retried = True
+            outcome = await pv_apply(sid, fetched, verdict_used.model_dump(), metrics, data.dry_run)
+            fix = verdict_used.fix_description[:120] or fix
+        pushed = bool(outcome.get("ok"))
+        new_version = outcome.get("new_version")
+        verified = False
+        on_target: bool | None = None
+        target_why = ""
+        if pushed:
+            check = await pv_live_verify(str(new_version), pre_url)
+            verified = bool(check.get("ok"))
+            # v4.4: after the push, a cheap second opinion compares the
+            # narration against the applied edits - a wrong-target fix is
+            # already live, but the state note, report and notify say so
+            # honestly instead of a third false "verified" claim
+            if verified:
+                try:
+                    tc = await pv_target_check(
+                        str(fetched.get("transcript") or ""),
+                        fix,
+                        verdict_used.model_dump().get("edits") or [],
+                    )
+                    if isinstance(tc, dict):
+                        on_target = bool(tc.get("on_target"))
+                        target_why = str(tc.get("why") or "")[:150]
+                except Exception:
+                    on_target = None  # advisory: unknown, never fatal
+            # v4.9: persist the fix (with its exact edits) into
+            # the player-visible fix log; the stored edits make it
+            # revertable from the panel
+            # NO truncation — the [:600] cap once cut this edit
+            # pair mid-span and a revert built from the truncated record
+            # would have left the build-breaking tail in place; the revert
+            # inverts EXACTLY what is stored, so store the full pair.
+            # v4.9.6: `live` records whether the bundle ever confirmed
+            # (false = probable build break, surfaced to the player)
+            await pv_fixlog_add({
+                "id": str(new_version),
+                "sid": sid,
+                "version": str(new_version),
+                "sha": str(outcome.get("commit") or "")[:10],
+                "desc": fix[:160],
+                "reverted": False,
+                "live": bool(verified),
+                "edits": [
+                    {
+                        "file": str(ed.get("file") or APP_LABEL),
+                        "old": str(ed.get("old") or ""),
+                        "new": str(ed.get("new") or ""),
+                    }
+                    for ed in (verdict_used.model_dump().get("edits") or [])
+                    if isinstance(ed, dict)
+                ],
+            })
+            if verified and on_target is False:
+                note = f"fix live ({new_version}) BUT target uncertain: {target_why}"[:200]
+            elif verified:
+                note = f"fix live ({new_version}): {fix}"[:200]
+            else:
+                # an unconfirmed push after the 5-min bundle
+                # poll is almost always a FAILED BUILD (the broken commit
+                # compiled nowhere) — name the probable cause honestly so
+                # the player knows main needs healing, not just a reload
+                note = f"push ok but the deploy did NOT confirm ({new_version}): probable build failure, revert the fix: {fix}"[:200]
+            await pv_stage(sid, "done", note, pushed=True)
+            await pv_report(sid, {
+                "v": 1, "sid": sid, "classification": "app_fix", "pushed": True,
+                "verified": verified, "on_target": on_target, "target_why": target_why,
+                "new_version": new_version, "version": metrics["version"],
+                "metrics": {k: v for k, v in metrics.items() if k != "transcript"},
+                "findings": findings, "fix": fix, "reasoning": verdict_used.reasoning,
+                "edits": [
+                    {"file": str(ed.get("file") or APP_LABEL), "old": str(ed.get("old") or ""), "new": str(ed.get("new") or "")}
+                    for ed in (verdict_used.model_dump().get("edits") or [])
+                ],
+                **ctx_fields,
+            })
+            if not data.dry_run:
+                if verified and on_target is False:
+                    await pv_notify(NOTIFY_TITLE, f"Version {new_version} live BUT target uncertain: {target_why}", NOTIFY_TAG)
+                elif verified:
+                    await pv_notify(NOTIFY_TITLE, f"New version {new_version} live: {fix}", NOTIFY_TAG)
+                else:
+                    await pv_notify(NOTIFY_TITLE, f"Fix pushed ({new_version}) but the deploy did NOT confirm: probable build failure: revert it with the REVERT button; main needs healing.", NOTIFY_TAG)
+            return BrainResult(sid=sid, stage="done", note=note, classification="app_fix", findings=findings, pushed=True, verified=verified, new_version=str(new_version), on_target=on_target)
+        # push did not happen: name the gate failure honestly
+        reason = str(outcome.get("reason") or "?")
+        note = f"fix not pushed: {reason}"[:200]
+        await pv_stage(sid, "done", note, pushed=False)
+        await pv_report(sid, {
+            "v": 1, "sid": sid, "classification": "app_fix", "pushed": False, "reason": reason,
+            "version": metrics["version"], "metrics": {k: v for k, v in metrics.items() if k != "transcript"},
+            "findings": findings, "fix": fix, "reasoning": verdict_used.reasoning,
+            "retried": retried, "retries": retries, "gate_history": gate_history[:6],
+            "proposed_edits": [
+                {
+                    "file": str(ed.get("file") or APP_LABEL),
+                    "old": str(ed.get("old") or ""),
+                    "new": str(ed.get("new") or ""),
+                }
+                for ed in (verdict_used.model_dump().get("edits") or [])
+            ],
+            **ctx_fields,
+        })
+        if not data.dry_run:
+            await pv_notify(NOTIFY_TITLE, f"The analysis found a bug but the auto-fix did not land: {reason}", NOTIFY_TAG)
+        return BrainResult(sid=sid, stage="done", note=note, classification="app_fix", findings=findings)
+
+
+    async def _revert(self, data: BrainInput) -> BrainResult:
+        """The revert lane - deterministic player-requested
+        revert of one shipped fix (fix-log entry). The inverted edits run
+        through the SAME gates: the anchor-uniqueness check on the applied
+        `new` text proves the source is in its post-fix state, so a revert
+        cannot fire against drifted sources."""
+        sid = data.sid
+        fix_id = data.fix_id[:24]
+        await pv_stage(sid, "reverting", f"reverting {fix_id}")
+        entry = None
+        for f in await pv_fixlog_read():
+            if str(f.get("id") or "") == fix_id:
+                entry = f
+                break
+        if not entry or entry.get("reverted"):
+            note = f"revert target not found or already reverted: {fix_id}"[:200]
+            await pv_stage(sid, "done", note, pushed=False)
+            if not data.dry_run:
+                await pv_notify(NOTIFY_TITLE, note, NOTIFY_TAG)
+            return BrainResult(sid=sid, stage="done", note=note, classification="revert", findings=[])
+        desc = str(entry.get("desc") or fix_id)[:160]
+        edits = [
+            ed
+            for ed in (entry.get("edits") or [])
+            if isinstance(ed, dict) and ed.get("old") and ed.get("new")
+        ]
+        if not edits:
+            note = f"fix {fix_id} has no stored edits: revert not possible"[:200]
+            await pv_stage(sid, "done", note, pushed=False)
+            if not data.dry_run:
+                await pv_notify(NOTIFY_TITLE, note, NOTIFY_TAG)
+            return BrainResult(sid=sid, stage="done", note=note, classification="revert", findings=[])
+        inverted = [
+            {
+                "file": str(ed.get("file") or APP_LABEL),
+                "old": str(ed.get("new") or ""),
+                "new": str(ed.get("old") or ""),
+            }
+            for ed in reversed(edits)
+        ]
+        # v4.9.2: the editable lane is App.tsx only — a stored fix entry
+        # whose edits touch the testmode cannot be reverted by the brain
+        # (the panel is maintained by the dev agents); refuse honestly
+        if any(str(ed.get("file") or APP_LABEL) != APP_LABEL for ed in inverted):
+            note = f"revert not possible: fix {fix_id} touches the test panel (read-only)"[:200]
+            await pv_stage(sid, "done", note, pushed=False)
+            if not data.dry_run:
+                await pv_notify(NOTIFY_TITLE, note, NOTIFY_TAG)
+            return BrainResult(sid=sid, stage="done", note=note, classification="revert", findings=[])
+        verdict_r = {
+            "classification": "app_fix",
+            "fix_description": f"revert: {desc}"[:120],
+            "edits": inverted,
+            "findings": [f"{fix_id} reverted at the player's request"],
+            "target_evidence": str(inverted[0]["old"])[:200],
+        }
+        rm = {
+            "version": "",
+            "mode": "revert",
+            "durationMs": "",
+            "events": "",
+            "wire": "",
+            "booms": "",
+            "midTurnLoads": [],
+            "pumpStalls": [],
+        }
+        try:
+            fetched = await pv_fetch_sources()
+        except Exception as e:
+            reason = (str(e) or type(e).__name__ or "unknown error")[:120]
+            await pv_stage(sid, "error", f"source fetch failed: {reason}")
+            raise
+        pre_url = await pv_live_url_activity()
+        outcome = await pv_apply(sid, fetched, verdict_r, rm, data.dry_run)
+        pushed = bool(outcome.get("ok"))
+        new_version = outcome.get("new_version")
+        verified = False
+        if pushed:
+            check = await pv_live_verify(str(new_version), pre_url)
+            verified = bool(check.get("ok"))
+            if verified:
+                await pv_fixlog_reverted(fix_id, str(new_version))
+                # the revert itself logs as revertable too (reverting the
+                # revert = the player's redo lever)
+                await pv_fixlog_add({
+                    "id": str(new_version),
+                    "sid": sid,
+                    "version": str(new_version),
+                    "sha": str(outcome.get("commit") or "")[:10],
+                    "desc": f"revert: {desc}"[:160],
+                    "reverted": False,
+                    "live": bool(verified),
+                    "reverts": fix_id,
+                    "edits": inverted,
+                })
+            note = (
+                f"revert live ({new_version}): {desc}"
+                if verified
+                else f"revert pushed but the deploy did NOT confirm ({new_version}): probable build failure: {desc}"
+            )[:200]
+            await pv_stage(sid, "done", note, pushed=True)
+            await pv_report(f"revert-{fix_id}", {
+                "v": 1, "sid": sid, "classification": "revert", "pushed": True,
+                "verified": verified, "new_version": new_version, "reverts": fix_id,
+                "desc": desc,
+            })
+            if not data.dry_run:
+                await pv_notify(
+                    NOTIFY_TITLE,
+                    f"Revert {new_version} live: {desc}" if verified else f"Revert pushed ({new_version}) but the deploy did NOT confirm: probable build failure, main needs healing.",
+                    NOTIFY_TAG,
+                )
+            return BrainResult(sid=sid, stage="done", note=note, classification="revert", findings=[f"reverted: {fix_id}"], pushed=True, verified=verified, new_version=str(new_version))
+        reason = str(outcome.get("reason") or "?")
+        note = f"revert not pushed: {reason}"[:200]
+        await pv_stage(sid, "done", note, pushed=False)
+        await pv_report(f"revert-{fix_id}", {
+            "v": 1, "sid": sid, "classification": "revert", "pushed": False,
+            "reason": reason, "reverts": fix_id, "desc": desc,
+        })
+        if not data.dry_run:
+            await pv_notify(NOTIFY_TITLE, f"Revert {fix_id} did not land: {reason}", NOTIFY_TAG)
+        return BrainResult(sid=sid, stage="done", note=note, classification="revert", findings=[])
+
