@@ -211,6 +211,14 @@ v4.18.1 (cross-process manifest healing): module globals NEVER travel
   3. the body passes origin= on every activity call (the run input is
      the ONE bootstrap value; the argument is the only channel that
      crosses processes).
+
+v4.18.2 (verdict recent keyword): the engine lane (v4.18) inserted the
+  eng_src/eng_label params BEFORE `recent` in pv-verdict's signature,
+  so the body's positional recent_commits list landed on eng_src and
+  the first verdict call died with "got multiple values for parameter
+  'eng_src'". `recent` now travels BY KEYWORD at both verdict call
+  sites (a file-wide AST audit confirms no other positional/keyword
+  collision in any pv_ activity call).
 """
 
 import json
@@ -2383,7 +2391,12 @@ class BrainWorkflow:
             fetched.get("panel_src"),
             fetched.get("ctl_src"),
             fetched.get("qa_src"),
-            fetched.get("recent_commits") or [],
+            # v4.18.2: `recent` travels BY KEYWORD — the engine lane added
+            # eng_src/eng_label params BEFORE it positionally, and a
+            # positional recent list landed on eng_src (TypeError:
+            # "multiple values for parameter 'eng_src'" at the first
+            # verdict call).
+            recent=fetched.get("recent_commits") or [],
             context_md=fetched.get("context_md"),
             qa_block=qa_block,
             ro_block=ro_block,
@@ -2537,7 +2550,7 @@ class BrainWorkflow:
                     fetched.get("panel_src"),
                     fetched.get("ctl_src"),
                     fetched.get("qa_src"),
-                    fetched.get("recent_commits") or [],
+                    recent=fetched.get("recent_commits") or [],
                     feedback=_retry_feedback(
                         dict(outcome, gate_history=gate_history),
                         fetched["app_src"],
