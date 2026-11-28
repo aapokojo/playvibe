@@ -138,6 +138,21 @@ export interface PlayvibeBrain {
       implements today — the Vite/Vercel asset pattern; validated,
       fails named on anything else) */
   liveVerify: "bundle-filename";
+  /** v4.15: full-codebase read context — when true the brain fetches
+      ONE tarball of the repo's main branch and renders EVERY text
+      source file into its read-only prompt context (on top of
+      readOnlyPaths). Noise is filtered out (binaries, lockfiles,
+      build output, .env*), each file caps at 60 KB and the whole
+      fetch at contextMaxKB. The apply gate is unchanged: only appPath
+      stays editable. Optional, default false. */
+  fullContext?: boolean;
+  /** total budget in KB for the full-context fetch; optional, default
+      350 (clamped to at least 50) */
+  contextMaxKB?: number;
+  /** extra repo paths to exclude from the full-context fetch: exact
+      files or directory prefixes ("src/private-lane" also skips
+      "src/private-lane/anything.ts") */
+  contextExclude?: readonly string[];
 }
 
 export interface PlayvibeAnalysis {

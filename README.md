@@ -315,3 +315,18 @@ every lane, no exceptions.
   session history anywhere. The v0.9.0 open question is resolved:
   deployments share the one app registered by brain/mistral.json and
   differ only in deployment_name.
+- v4.15 (full-codebase read context): a game may declare
+  `brain.fullContext: true` in its manifest. The brain then fetches ONE
+  tarball of the repo's main branch and renders EVERY text source file
+  into the same read-only prompt lane as `readOnlyPaths` — the model
+  sees the whole game, not just manifest-declared files. Built-in
+  filters keep the prompt sane and safe: binaries, lockfiles, build
+  output, vendor/tooling directories and anything that could carry
+  secrets (`.env*`) never enter it; each file caps at 60 KB and the
+  total at `brain.contextMaxKB` (default 350 KB, minimum 50);
+  `brain.contextExclude` adds game-specific files or directory
+  prefixes. The fetch is fail-open (a tarball problem degrades the
+  prompt, never the run; the report's `full_context` flag says which
+  happened). The apply gate is untouched: full sight, unchanged edit
+  rights — only `brain.appPath` stays editable and `target_evidence`
+  must still quote it alone.
