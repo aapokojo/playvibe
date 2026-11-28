@@ -183,32 +183,66 @@ def verdict_prompt(
     recent: list[str] | None = None,
     game_context: str | None = None,
     app_label: str = "App.tsx",
+    eng_src: str | None = None,
+    eng_label: str = "",
 ) -> str:
     """The classification prompt: metrics + narration + the v4.4 multi-file
     context (editable lane + read-only reference files). v4.9.5: the
     game's own context file (AGENT-CONTEXT.md) renders as the GAME
     CONTEXT block and carries the game-specific rules, examples and
-    conventions; what remains here is game-agnostic edit mechanics."""
+    conventions; what remains here is game-agnostic edit mechanics.
+    v4.18: eng_src/eng_label render the manifest's optional engine file
+    as a SECOND EDITABLE lane."""
     import json
 
     def _block(label: str, src: str | None) -> str:
         return "--- " + label + " ---\n```tsx\n" + (src or "") + "\n```\n"
 
+    eng_lane = bool(eng_src and eng_label)
     if app_src:
+        editable_desc = (
+            f"{app_label} (the app/UI lane) and {eng_label} (the engine lane)"
+            if eng_lane
+            else f"{app_label} in this game"
+        )
+        engine_rule = (
+            (
+                f" The engine file {eng_label} is EDITABLE: a SMALL, SURGICAL\n"
+                "engine-side fix (a camera band clamp, a constant, a formula\n"
+                f"line) is app_fix with its edits naming {eng_label}; anything\n"
+                "that would SIGNIFICANTLY change game mechanics, physics,\n"
+                "balance or netcode still classifies game_logic."
+            )
+            if eng_lane
+            else ""
+        )
+        ro_rule = (
+            "Every module the GAME CONTEXT marks READ-ONLY is never edited —\n"
+            "netcode is never editable; the engine lane's surgical rule is\n"
+            "below."
+            if eng_lane
+            else "Every module the GAME CONTEXT marks READ-ONLY is never edited —\n"
+            "never change game physics, turn logic or netcode."
+        )
         context = (
             "LANE (hard — matches the GAME CONTEXT above): your edits may ONLY\n"
-            f"target the editable file the context names ({app_label} in this\n"
-            "game), as exact-string replacements that each appear EXACTLY ONCE\n"
-            "in that file. Keep the total footprint under ~40 changed lines.\n"
-            "Every module the GAME CONTEXT marks READ-ONLY is never edited —\n"
-            "never change game physics, turn logic or netcode. The test tooling\n"
-            "tree below is READ-ONLY context: consult it when an identifier, prop\n"
-            "or state line is unclear; a narration about the test tooling\n"
-            "itself classifies game_logic and says so in findings. The version\n"
-            "file holds the single version constant; the pipeline bumps it\n"
-            "deterministically — never propose edits to it.\n\n"
-            + _block(f"{app_label} (EDITABLE — the only editable file)", app_src)
+            f"target the editable file(s) the context names ({editable_desc}),\n"
+            "as exact-string replacements that each appear EXACTLY ONCE\n"
+            "in the file the edit names. Keep the total footprint under ~40\n"
+            "changed lines. "
+            + ro_rule
+            + " The test tooling tree below is READ-ONLY context:\n"
+            "consult it when an identifier, prop or state line is unclear; a\n"
+            "narration about the test tooling itself classifies game_logic\n"
+            "and says so in findings. The version file holds the single\n"
+            "version constant; the pipeline bumps it deterministically —\n"
+            "never propose edits to it."
+            + engine_rule
+            + "\n\n"
+            + _block(f"{app_label} (EDITABLE — the app lane)", app_src)
         )
+        if eng_lane:
+            context += _block(f"{eng_label} (EDITABLE — the engine lane)", eng_src)
         if panel_src:
             context += _block("TestPanel.tsx = src/testmode/TestPanel.tsx (READ-ONLY — NEVER EDIT)", panel_src)
         if ctl_src:
@@ -245,6 +279,37 @@ def verdict_prompt(
             "PLAYER, so a small, honest, on-target fix is never a dead end:\n"
             "propose one confidently.\n\n"
         )
+    # v4.18: the app_fix definition and the file-lane contract line name
+    # BOTH editable files when the engine lane is active
+    app_fix_bullet = (
+        (
+            "- \"app_fix\": a clear, small, surgical bug in the editable files\n"
+            f"  (UI in {app_label}; engine mechanics in {eng_label}). You are\n"
+            "  confident, each edit's `old` string is copied verbatim from the\n"
+            "  file it names and appears exactly once there, and the fix is too\n"
+            "  small to significantly change the game's design. The test panel\n"
+            "  and all test tooling are NOT editable — narration about them is\n"
+            "  game_logic. Do NOT bump version strings yourself — the pipeline\n"
+            "  does that deterministically in the game's version file.\n"
+        )
+        if eng_lane
+        else (
+            "- \"app_fix\": a clear, small, surgical bug in the editable game UI\n"
+            "  file ONLY (UI, HUD overlays, toasts, on-screen controls). You are\n"
+            "  confident, each edit's `old` string is copied verbatim from\n"
+            "  the editable file above and appears exactly once there, and the\n"
+            "  fix cannot change game behavior. The test panel and all test\n"
+            "  tooling are NOT editable — narration about them is game_logic.\n"
+            "  Do NOT bump version strings yourself — the pipeline does that\n"
+            "  deterministically in the game's version file.\n"
+        )
+    )
+    file_lane_line = (
+        f'  in `file`: "{app_label}" or "{eng_label}" are the editable files\n'
+        f'  (leave it empty for the default {app_label});\n'
+        if eng_lane
+        else f'  in `file`: ONLY "{app_label}" is ever editable (leave it empty for the default);\n'
+    )
     return (
         "You are the autonomous dev-agent brain for the game described in the\n"
         "GAME CONTEXT block below. A test session was recorded on the player's\n"
@@ -260,15 +325,8 @@ def verdict_prompt(
         "Classify the session into exactly one verdict:\n"
         "- \"clean\": the session is healthy, the narration confirms things work\n"
         "  as planned. Everything works: no findings worth a code change.\n"
-        "- \"app_fix\": a clear, small, surgical bug in the editable game UI\n"
-        "  file ONLY (UI, HUD overlays, toasts, on-screen controls). You are\n"
-        "  confident, each edit's `old` string is copied verbatim from\n"
-        "  the editable file above and appears exactly once there, and the\n"
-        "  fix cannot change game behavior. The test panel and all test\n"
-        "  tooling are NOT editable — narration about them is game_logic.\n"
-        "  Do NOT bump version strings yourself — the pipeline does that\n"
-        "  deterministically in the game's version file.\n"
-        "\n"
+        + app_fix_bullet
+        + "\n"
         "TARGET RULES (a wrong-target fix is worse than no fix; see the GAME\n"
         "CONTEXT's known-pitfalls section for this game's past incidents):\n"
         "- LOCATE before you edit: find the exact source site of the label or\n"
@@ -304,8 +362,8 @@ def verdict_prompt(
         "\n"
         "EDIT CONTRACT (hard gates — every violation aborts the whole fix):\n"
         "- Each edit is one old -> new replacement and names its target file\n"
-        f'  in `file`: ONLY "{app_label}" is ever editable (leave it empty for the default);\n'
-        "  `old` must appear EXACTLY ONCE in THAT file. `old` and `new` must BOTH be\n"
+        + file_lane_line
+        + "  `old` must appear EXACTLY ONCE in THAT file. `old` and `new` must BOTH be\n"
         "  non-empty, and they must DIFFER (old == new is a forbidden no-op;\n"
         "  new == \"\" is a forbidden deletion — the gate rejects both).\n"
         "- To SPLIT one element (e.g. one instruction line holding two\n"
@@ -358,6 +416,8 @@ def edits_prompt(
     game_context: str | None = None,
     transcript: str = "",
     app_label: str = "App.tsx",
+    eng_src: str | None = None,
+    eng_label: str = "",
 ) -> str:
     """v4.9.3 phase 2: the diagnosis is already committed; this prompt asks
     ONLY for the edits that implement it.
@@ -390,7 +450,17 @@ def edits_prompt(
         str(transcript or "").strip()[:2000] or "(no transcript)",
         "",
         "Output ONLY the exact-string edits that implement this committed fix",
-        f'in {app_label} (the ONLY editable file; leave `file` empty for the default):',
+        *(
+            [
+                f'in {app_label} (the ONLY editable file; leave `file` empty for the default):',
+            ]
+            if not (eng_src and eng_label)
+            else [
+                f'in {app_label} or {eng_label} (the manifest\'s editable files;',
+                f'name the file each edit targets in `file`; leave it empty for',
+                f'the default {app_label}):',
+            ]
+        ),
         "- SMALLEST VISUAL DELTA (v4.9.7, hard): satisfy the narration while",
         "  PRESERVING every existing size, spacing, position and behavior",
         "  the narration does NOT ask to change. 'Make the boxes equal'",
@@ -456,11 +526,20 @@ def edits_prompt(
     lines.extend(game_context_block(game_context).splitlines())
     lines.append("")
     lines += [
-        f"--- {app_label} (EDITABLE — the only editable file) ---",
+        f"--- {app_label} (EDITABLE — the app lane) ---",
         "```tsx",
         app_src,
         "```",
     ]
+    # v4.18: the engine lane renders as a second EDITABLE block
+    if eng_src and eng_label:
+        lines += [
+            "",
+            f"--- {eng_label} (EDITABLE — the engine lane) ---",
+            "```tsx",
+            eng_src,
+            "```",
+        ]
     if feedback:
         lines.append(feedback)
     return "\n".join(lines)

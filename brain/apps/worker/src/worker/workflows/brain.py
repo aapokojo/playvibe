@@ -58,11 +58,15 @@ sessions). The workflow holds no store credentials. There is no
 scheduled poll: every run is on demand (the game's kick or queue).
 
 HARD RULES (fail-safe by construction):
-  - the manifest's editable app file is the ONLY editable file; the
-    installed test-mode package sources are READ-ONLY context and the
-    version file is bumped ONLY by the pipeline; every other path is
-    untouchable. Narration about the test panel itself classifies
-    game_logic (the panel is maintained by the dev agents, not the brain)
+  - the manifest's editable app file is the only STANDARD editable
+    file; the manifest may additionally name ONE engine file
+    (brain.enginePath, v4.18) as a second editable lane — every edit
+    names its file and the gate refuses anything outside the manifest's
+    editable set; the installed test-mode package sources are READ-ONLY
+    context and the version file is bumped ONLY by the pipeline; every
+    other path is untouchable. Narration about the test panel itself
+    classifies game_logic (the panel is maintained by the dev agents,
+    not the brain)
   - every gate failure aborts BEFORE the push and names the reason
     honestly in the brain-state note and the notify push
   - a STRUCTURAL BALANCE GATE guards the push — the sum of tag-balance
@@ -169,6 +173,27 @@ v4.16 (ask inbox hygiene): after a live verdict the brain PRUNES the
   can never steer a future verdict. Fail-soft: a prune problem never
   kills the run. The panel also gains a per-ask dismiss (player lane,
   package-side, rides the next publish).
+
+v4.17 (ask once per session): a game_logic verdict asks AT MOST ONCE
+  per session — when the run consumes an answer to THIS sid's own
+  question (<sid>-q), the player already decided the finding: record
+  the standing choice (player_choice) in the report + a done note and
+  prune the inbox; re-asking an answered question loops the player
+  forever on a decision they already gave.
+
+v4.18 (engine edit lane): the manifest may name a SECOND editable file
+  (brain.enginePath) — the engine lane. The engine file is fetched
+  EDITABLE alongside the app file and rendered as such in the verdict +
+  edit prompts; edits may name either editable file (target_evidence
+  must live in one of them; anchors stay unique per file; the size and
+  balance gates run per file); ONE atomic commit may touch both, and
+  the revert lane inverts engine edits too. Fail-open: no enginePath
+  (or a fetch problem) means no engine lane and engine-naming edits are
+  refused honestly — everything else behaves as before. A SMALL
+  surgical engine fix (a camera clamp band, a constant, a formula
+  line) is an app_fix in the engine lane; anything that would
+  significantly change mechanics, physics, balance or netcode still
+  classifies game_logic.
 """
 
 import json
@@ -217,6 +242,10 @@ VER_PATH = "src/version.ts"
 # manifest's paths) — the whole pipeline speaks the game's own file names.
 APP_LABEL = "App.tsx"
 VER_LABEL = "version.ts"
+# v4.18: the optional SECOND editable lane (manifest brain.enginePath;
+# "" = this game declares no engine lane)
+ENG_PATH = ""
+ENG_LABEL = ""
 NOTIFY_URL = ""  # manifest routes.notify
 QA_URL = ""  # manifest routes.agentqa
 # the game's context keeper (repo root) — the game's ONE context file,
@@ -277,7 +306,7 @@ def _apply_manifest(manifest: dict[str, Any]) -> None:
     global GAME, BROKER, REPO, APP_PATH, PANEL_PATH, CTL_PATH, QA_PATH, VER_PATH
     global CONTEXT_PATH, SESS_PREFIX, TRANS_PREFIX, REPORT_PREFIX, STATE_KEY, FIXLOG_KEY
     global QUEUE_ADVANCE, FILE_PATHS, NOTIFY_TAG, NOTIFY_TITLE
-    global APP_LABEL, VER_LABEL, NOTIFY_URL, QA_URL, RO_PATHS
+    global APP_LABEL, VER_LABEL, NOTIFY_URL, QA_URL, RO_PATHS, ENG_PATH, ENG_LABEL
     global FULL_CONTEXT, CTX_MAX_KB, CTX_EXCLUDE
     brain = manifest.get("brain") or {}
     origin = str(brain.get("origin") or GAME).rstrip("/")
@@ -285,6 +314,10 @@ def _apply_manifest(manifest: dict[str, Any]) -> None:
     REPO = "repos/" + str(manifest.get("repo") or REPO[len("repos/"):])
     APP_PATH = str(brain.get("appPath") or APP_PATH)
     VER_PATH = str(brain.get("versionPath") or VER_PATH)
+    # v4.18: the optional SECOND editable lane — brain.enginePath names
+    # the game's engine file; absent = no engine lane (fail-open)
+    ENG_PATH = str(brain.get("enginePath") or "").strip()
+    ENG_LABEL = ENG_PATH.rsplit("/", 1)[-1] if ENG_PATH else ""
     by_name = {str(p).rsplit("/", 1)[-1]: str(p) for p in (brain.get("readOnlyPaths") or [])}
     PANEL_PATH = by_name.get("TestPanel.tsx", PANEL_PATH)
     CTL_PATH = by_name.get("controller.ts", CTL_PATH)
@@ -292,11 +325,13 @@ def _apply_manifest(manifest: dict[str, Any]) -> None:
     # v4.14: readOnlyPaths double as READ-ONLY CONTEXT fetches — files the
     # model may see and quote but never edit. The standard slots (app,
     # panel, controller, QA, version, context file) fetch by their own
-    # paths, so they are excluded here to avoid double fetches.
+    # paths, so they are excluded here to avoid double fetches; the
+    # v4.18 engine lane (brain.enginePath) fetches EDITABLE, so it is
+    # excluded from the read-only lane too.
     RO_PATHS = [
         str(p)
         for p in (brain.get("readOnlyPaths") or [])
-        if isinstance(p, str) and p and p not in (APP_PATH, PANEL_PATH, CTL_PATH, QA_PATH, VER_PATH, CONTEXT_PATH)
+        if isinstance(p, str) and p and p not in (APP_PATH, PANEL_PATH, CTL_PATH, QA_PATH, VER_PATH, CONTEXT_PATH, ENG_PATH)
     ]
     # v4.15: full-codebase read context — the game opts in via
     # brain.fullContext; brain.contextMaxKB (default 350) caps the
@@ -325,6 +360,8 @@ def _apply_manifest(manifest: dict[str, Any]) -> None:
     APP_LABEL = APP_PATH.rsplit("/", 1)[-1]
     VER_LABEL = VER_PATH.rsplit("/", 1)[-1]
     FILE_PATHS = {APP_LABEL: APP_PATH, "TestPanel.tsx": PANEL_PATH, VER_LABEL: VER_PATH}
+    if ENG_PATH:
+        FILE_PATHS[ENG_LABEL] = ENG_PATH
 
 
 @workflows.activity(
@@ -428,7 +465,7 @@ class FixEdit(BaseModel):
     # with an honest reason
     file: str = Field(
         default="",
-        description="the file this edit applies to; empty = the editable app file named by the game manifest, the only file the brain may edit (the test panel files are read-only for the brain)",
+        description="the file this edit applies to; empty = the editable app file named by the game manifest (the default lane); the manifest may name ONE additional editable file (the engine lane — its label is shown in the prompt): name it in `file` for engine-side edits; every other file (the test panel, the net module) is read-only and refused by the gate",
     )
 
 
@@ -450,7 +487,7 @@ class Verdict(BaseModel):
     # (v4.9.2: the editable lane is App.tsx ONLY)
     target_evidence: str = Field(
         default="",
-        description="ONE short contiguous snippet copy-pasted verbatim from the editable app file: the exact text of the label/button/element the narration mentions",
+        description="ONE short contiguous snippet copy-pasted verbatim from the file the fix targets (the manifest's editable files): the exact text of the label/button/element the narration mentions",
     )
     findings: list[str] = []
     reasoning: str = ""
@@ -554,6 +591,17 @@ def _ro_block(ro_srcs: dict[str, str] | None) -> str:
             "game_logic (an honest question or findings entry — never an\n"
             "app_fix targeting them). Your edits and target_evidence still\n"
             "come from the editable file ONLY.\n"
+        )
+    if ENG_LABEL:
+        # v4.18: the engine lane is EDITABLE — the generic "outside the
+        # app file = game_logic" rule above no longer covers it
+        head += (
+            f"EDITABLE ENGINE LANE: {ENG_LABEL} = {ENG_PATH} is EDITABLE —\n"
+            "a SMALL, surgical engine-side fix (a camera band clamp, a\n"
+            "constant, a formula line) is app_fix with its edits naming\n"
+            f"{ENG_LABEL}; anything that would SIGNIFICANTLY change game\n"
+            "mechanics, physics, balance or netcode still classifies\n"
+            "game_logic.\n"
         )
     out: list[str] = [head]
     for fpath in sorted(ro_srcs):
@@ -668,22 +716,30 @@ def _anchor_excerpt(app_src: str, old: str, width: int = 400) -> str:
     return app_src[start:end]
 
 
-def _anchor_feedback(outcome: dict[str, Any], app_src: str | None, panel_src: str | None = None) -> str:
+def _anchor_feedback(outcome: dict[str, Any], app_src: str | None, panel_src: str | None = None, eng: tuple[str, str] | None = None) -> str:
     """v3: second-chance prompt block after a rejected anchor (v4.4: the
-    verbatim excerpt is taken from the file the rejected edit named)."""
+    verbatim excerpt is taken from the file the rejected edit named).
+    v4.18: eng = (label, src) — the engine lane's source, so an engine
+    anchor's excerpt comes from the engine file, not the app file."""
     old = str(outcome.get("failed_old") or "")
     n = outcome.get("failed_count", "?")
     reason = str(outcome.get("reason") or "?")
-    tgt = panel_src if str(outcome.get("file") or "") == "TestPanel.tsx" else app_src
+    fname = str(outcome.get("file") or "")
+    tgt = app_src
+    if fname and eng and fname == str(eng[0]):
+        tgt = eng[1] or app_src
+    elif fname == "TestPanel.tsx" and panel_src:
+        tgt = panel_src
     tgt = tgt or app_src
+    where = fname or APP_PATH
     lines = [
         "",
         "--- RETRY: THE GATE REJECTED YOUR PREVIOUS EDITS ---",
         f"Gate failure: {reason}",
-        f"The old string below was found {n} time(s) in {str(outcome.get('file') or APP_PATH)}, so the edit was NOT applied.",
+        f"The old string below was found {n} time(s) in {where}, so the edit was NOT applied.",
         "Re-propose the FULL edits list with the SAME schema (classification stays app_fix).",
         "The `old` anchor must appear EXACTLY ONCE, copied verbatim character-for-character",
-        f"from {APP_PATH}. Do not invent anchors: copy them from the source excerpt below",
+        f"from {where}. Do not invent anchors: copy them from the source excerpt below",
         "or from the source you were given.",
         "Rejected old string (truncated):",
         old[:600] if old else "(empty)",
@@ -876,20 +932,22 @@ def _match_extensions(content: str, old: str, k: int = 3, limit: int = 4, max_ch
     return out
 
 
-def _evidence_feedback(outcome: dict[str, Any], app_src: str | None, panel_src: str | None) -> str:
+def _evidence_feedback(outcome: dict[str, Any], app_src: str | None, panel_src: str | None, eng: tuple[str, str] | None = None) -> str:
     """v4.5: the v4.4 gate refused the model's own on-site quotes
     twice and the model degenerated to an empty proposal. Teach the exact
     quoting discipline (ONE contiguous snippet copy-pasted from the source,
     never re-typed from the narration) and SHOW the real near-miss lines
-    to copy verbatim."""
+    to copy verbatim. v4.18: eng = (label, src) — the prompt names every
+    editable file the gate searched."""
     ev = str(outcome.get("failed_old") or "")
     near = outcome.get("near") or []
+    editable = APP_LABEL if not eng else f"{APP_LABEL} or {eng[0]}"
     lines = [
         "",
         "--- RETRY: THE TARGET-EVIDENCE GATE REJECTED YOUR QUOTE ---",
         f"Gate failure: {str(outcome.get('reason') or '?')}",
         "target_evidence must be ONE SHORT CONTIGUOUS snippet COPY-PASTED",
-        f"verbatim from the {APP_LABEL} block in this prompt —",
+        f"verbatim from the {editable} block(s) in this prompt —",
         "a single label or button text. NEVER re-type it from the narration",
         '(the spoken narration may PARAPHRASE the UI: a source label can be',
         'narrated loosely), NEVER join quotes across several JSX lines or spans —',
@@ -910,7 +968,15 @@ def _evidence_feedback(outcome: dict[str, Any], app_src: str | None, panel_src: 
     return "\n".join(lines)
 
 
-def _retry_feedback(outcome: dict[str, Any], app_src: str | None, panel_src: str | None = None) -> str:
+def _eng_pair(fetched: dict[str, Any]) -> tuple[str, str] | None:
+    """v4.18: the engine lane's (label, source) pair from a fetched
+    dict, or None when this game/run has no engine lane."""
+    label = str(fetched.get("eng_label") or "")
+    src = fetched.get("eng_src")
+    return (label, str(src)) if (label and src) else None
+
+
+def _retry_feedback(outcome: dict[str, Any], app_src: str | None, panel_src: str | None = None, eng: tuple[str, str] | None = None) -> str:
     """v4: route the retry prompt by failure type - anchor misses keep the
     battle-tested _anchor_feedback; empty/identical edits and empty edit
     lists get the move/edit contract; v4.4 target-evidence failures are
@@ -919,8 +985,8 @@ def _retry_feedback(outcome: dict[str, Any], app_src: str | None, panel_src: str
     if r.startswith("empty or identical edit") or r == "no edits":
         return _contract_feedback(outcome, app_src)
     if r.startswith("target evidence"):
-        return _evidence_feedback(outcome, app_src, panel_src)
-    return _anchor_feedback(outcome, app_src, panel_src)
+        return _evidence_feedback(outcome, app_src, panel_src, eng)
+    return _anchor_feedback(outcome, app_src, panel_src, eng)
 
 
 # --------------------------------------------------------------- activities
@@ -1111,6 +1177,23 @@ async def pv_fetch(sid: str) -> dict[str, Any]:
                     d = r.json()
                     srcs[name] = base64.b64decode(d.get("content", "")).decode("utf-8")
                     shas[name] = str(d.get("sha") or "") or None
+        # v4.18: the optional ENGINE LANE (manifest brain.enginePath)
+        # fetches EDITABLE, exactly like the app file. Fail-open per the
+        # context rule: a fetch problem or a missing file means NO engine
+        # lane this run (engine-naming edits are then refused by the gate
+        # honestly) — it never kills the run.
+        if ENG_PATH:
+            try:
+                r = await c.get(
+                    f"{GITHUB}/{REPO}/contents/{ENG_PATH}?ref=main",
+                    headers=_gh_headers(tok),
+                )
+                if r.status_code == 200:
+                    d = r.json()
+                    srcs[ENG_LABEL] = base64.b64decode(d.get("content", "")).decode("utf-8")
+                    shas[ENG_LABEL] = str(d.get("sha") or "") or None
+            except Exception:
+                pass
         # v4.14: the manifest's extra read-only sources (engine.ts & co).
         # Fail-open per file like every context fetch: a missing file
         # degrades the prompt, never the run. A huge file truncates
@@ -1147,7 +1230,7 @@ async def pv_fetch(sid: str) -> dict[str, Any]:
 
                     taken = {
                         APP_PATH, PANEL_PATH, CTL_PATH, QA_PATH, VER_PATH,
-                        CONTEXT_PATH, *RO_PATHS,
+                        CONTEXT_PATH, ENG_PATH, *RO_PATHS,
                     }
                     code_first = ("src/", "api/", "app/", "game/", "public/")
                     candidates: list[tuple[int, str, str]] = []
@@ -1217,6 +1300,11 @@ async def pv_fetch(sid: str) -> dict[str, Any]:
             "qa_src": srcs.get("QAInput.tsx") or None,
             "ver_src": ver_src,
             "ver_sha": ver_sha,
+            # v4.18: the engine lane (None when this game declares none
+            # or the fetch failed — the gate then refuses engine edits)
+            "eng_src": srcs.get(ENG_LABEL) or None,
+            "eng_sha": shas.get(ENG_LABEL) or None,
+            "eng_label": ENG_LABEL or None,
             "context_md": srcs.get("context_md") or None,
             "ro_srcs": {k[3:]: v for k, v in srcs.items() if k.startswith("ro:")},
             "full_context": full_ctx,
@@ -1237,6 +1325,8 @@ async def pv_verdict(
     panel_src: str | None,
     ctl_src: str | None,
     qa_src: str | None,
+    eng_src: str | None = None,
+    eng_label: str | None = None,
     recent: list[str] | None = None,
     feedback: str | None = None,
     context_md: str | None = None,
@@ -1258,7 +1348,7 @@ async def pv_verdict(
 
     content = verdict_prompt(
         metrics, app_src, panel_src, ctl_src, qa_src, recent, game_context=context_md,
-        app_label=APP_LABEL,
+        app_label=APP_LABEL, eng_src=eng_src, eng_label=eng_label or "",
     )
     # v4.14: the consumed player answers + the manifest's extra read-only
     # sources ride between the assembled context and any gate feedback.
@@ -1290,6 +1380,8 @@ async def pv_edits(
     feedback: str | None = None,
     context_md: str | None = None,
     transcript: str = "",
+    eng_src: str | None = None,
+    eng_label: str | None = None,
 ) -> EditList:
     """v4.9.3 phase 2: given the committed diagnosis, emit ONLY the edits
     that implement it (see EditList for why the emission was split).
@@ -1312,6 +1404,7 @@ async def pv_edits(
         messages=[UserMessage(content=edits_prompt(
             fix_description, target_evidence, app_src, feedback, game_context=context_md,
             transcript=transcript, app_label=APP_LABEL,
+            eng_src=eng_src, eng_label=eng_label or "",
         ))],
         temperature=0,
         # 3000 tokens once truncated a giant-verbatim-anchor
@@ -1344,6 +1437,7 @@ async def pv_edits(
                 ((feedback + "\n\n") if feedback else "") + note,
                 game_context=context_md,
                 transcript=transcript, app_label=APP_LABEL,
+                eng_src=eng_src, eng_label=eng_label or "",
             ))],
             temperature=0,
             max_tokens=6000,
@@ -1366,10 +1460,12 @@ async def pv_apply(
     metrics: dict[str, Any],
     dry_run: bool,
 ) -> dict[str, Any]:
-    """v4.8: gate-check the edits across the editable lane (unique anchors
-    per file with 0x near-miss teaching; target evidence with paraphrase
-    tolerance), bump the single APP_VERSION constant in src/version.ts,
-    push ONE atomic commit (git data API, fast-forward)."""
+    """v4.8: gate-check the edits across the editable lane(s) (unique
+    anchors per file with 0x near-miss teaching; target evidence with
+    paraphrase tolerance), bump the single APP_VERSION constant in the
+    version file, push ONE atomic commit (git data API, fast-forward).
+    v4.18: the manifest's optional engine lane (brain.enginePath) is a
+    second editable file — the gate is per-file throughout."""
     import base64
 
     import httpx
@@ -1397,6 +1493,16 @@ async def pv_apply(
         return {"ok": False, "reason": f"TestPanel.tsx size odd ({len(panel_src)})"}
     if not ver_src or not ver_sha:
         return {"ok": False, "reason": f"version file missing ({VER_PATH})"}
+    # v4.18: the optional engine lane. Data-driven from the fetched
+    # sources (pv_fetch and pv-fetch-sources both provide it) so BOTH
+    # the analysis and the revert lane see the same gate; absent/failed
+    # fetch = no engine lane this run.
+    eng_src = fetched.get("eng_src")
+    eng_sha = fetched.get("eng_sha")
+    eng_label = str(fetched.get("eng_label") or "")
+    eng_lane = bool(eng_src and eng_sha and eng_label)
+    if eng_lane and not 500 < len(eng_src) < 400000:
+        return {"ok": False, "reason": f"{eng_label} size odd ({len(eng_src)})"}
 
     # v4.5: a worn-down retry round can hand back classification app_fix
     # with an EMPTY edits list (a past session did exactly that after two gate
@@ -1419,14 +1525,24 @@ async def pv_apply(
     evidence = str(verdict.get("target_evidence") or "").strip()
     if not evidence:
         return {"ok": False, "reason": "target evidence missing (target_evidence empty)"}
-    # v4.9.2: App.tsx is the only editable file, so the evidence must be
-    # locatable there (panel/controller/QA sources are read-only context)
-    if evidence not in app_src and _norm(evidence) not in _norm(app_src):
+    # v4.9.2 -> v4.18: the evidence must be locatable in ONE of the
+    # editable files (the app file, plus the engine file when the
+    # manifest declares it); panel/controller/QA/net sources stay
+    # read-only context
+    ev_targets = [(APP_LABEL, app_src)]
+    if eng_lane:
+        ev_targets.append((eng_label, eng_src))
+    ev_hit = any(
+        (evidence in s) or (_norm(evidence) in _norm(s))
+        for _, s in ev_targets
+    )
+    if not ev_hit:
+        searched = " or ".join(n for n, _ in ev_targets)
         return {
             "ok": False,
-            "reason": f"target evidence not found in the editable source ({APP_LABEL})",
+            "reason": f"target evidence not found in the editable sources ({searched})",
             "failed_old": evidence[:600],
-            "near": _near_misses(evidence, app_src),
+            "near": _near_misses(evidence, app_src, eng_src if eng_lane else None),
         }
 
     # v4.9.6: STRUCTURAL BALANCE GATE. A lone inserted </div>
@@ -1442,6 +1558,12 @@ async def pv_apply(
     worst = 0
     worst_d = 0
     for i, ed in enumerate(edits, 1):
+        # v4.18: the balance gate is a JSX structural check — it applies
+        # to the app file's edits only (engine TS code legitimately
+        # contains comparisons like `i < n` that the heuristic would
+        # miscount as open tags)
+        if str(ed.get("file") or APP_LABEL) != APP_LABEL:
+            continue
         d = tag_balance_delta(str(ed.get("old") or ""), str(ed.get("new") or ""))
         bal += d
         if d:
@@ -1461,15 +1583,20 @@ async def pv_apply(
             "balance": bal,
         }
 
-    # v4.9.2 (player directive): the editable lane is App.tsx ONLY — the
-    # testmode is its own component and must not be able to modify itself;
-    # version.ts stays the pipeline's bump spot
+    # v4.9.2 -> v4.18: the editable set is the manifest's app file plus,
+    # when declared, its engine file — every other lane (test panel, net,
+    # api routes) is refused honestly
+    allowed = {APP_LABEL}
+    if eng_lane:
+        allowed.add(eng_label)
     sources: dict[str, str] = {APP_LABEL: app_src, VER_LABEL: ver_src}
+    if eng_lane:
+        sources[eng_label] = eng_src
     applied = 0
     for ed in edits:
         fname = str(ed.get("file") or APP_LABEL)
-        if fname != APP_LABEL:
-            return {"ok": False, "reason": f"forbidden file lane ({fname}) — the test panel is read-only"}
+        if fname not in allowed:
+            return {"ok": False, "reason": f"forbidden file lane ({fname}) — editable: {', '.join(sorted(allowed))}"}
         old, new = str(ed.get("old", "")), str(ed.get("new", ""))
         if not old or not new or old == new:
             # v4: classify the contract violation and carry the offending
@@ -1488,8 +1615,10 @@ async def pv_apply(
                 "failed_new": new[:600],
                 "file": fname,
             }
-        if 'from "./engine"' in old or 'from "./net"' in old:
-            return {"ok": False, "reason": "forbidden lane (engine/net)"}
+        # v4.18: the app file may never touch its engine/net import lines
+        # (the engine file's own imports are its lane's business)
+        if fname == APP_LABEL and ('from "./engine"' in old or 'from "./net"' in old):
+            return {"ok": False, "reason": "forbidden lane (engine/net imports in the app file)"}
         content = sources[fname]
         n = content.count(old)
         if n != 1:
@@ -1509,7 +1638,8 @@ async def pv_apply(
                 "failed_old": old[:600],
                 "failed_count": n,
                 "file": fname,
-                "near": _near_misses(old, app_src) if n == 0 else [],
+                # v4.18: near-misses come from the file the edit names
+                "near": _near_misses(old, content) if n == 0 else [],
                 "lines": _match_lines(content, old) if n > 1 else [],
                 "extensions": _match_extensions(content, old) if n > 1 else [],
             }
@@ -1536,17 +1666,23 @@ async def pv_apply(
     sources[VER_LABEL] = sources[VER_LABEL].replace(f'"{cur}"', f'"{nxt}"', 1)
 
     # size sanity per editable file (a big rewrite is not a small fix)
-    # v4.9.2: App.tsx only (the testmode lane is read-only)
-    for label, before in ((APP_LABEL, app_src),):
+    # v4.18: the engine file joins the check when its lane is active
+    size_pairs = [(APP_LABEL, app_src)]
+    if eng_lane:
+        size_pairs.append((eng_label, eng_src))
+    for label, before in size_pairs:
         if not 0.8 < len(sources[label]) / len(before) < 1.25:
-            return {"ok": False, "reason": "size change too large (not a small fix)"}
+            return {"ok": False, "reason": f"size change too large in {label} (not a small fix)"}
 
+    changed_pairs = [
+        (APP_LABEL, app_src),
+        (VER_LABEL, ver_src),
+    ]
+    if eng_lane:
+        changed_pairs.append((eng_label, eng_src))
     changed = [
         label
-        for label, before in (
-            (APP_LABEL, app_src),
-            (VER_LABEL, ver_src),
-        )
+        for label, before in changed_pairs
         if sources[label] != before
     ]
     if not changed:
@@ -1554,6 +1690,7 @@ async def pv_apply(
 
     findings = "; ".join(str(f) for f in (verdict.get("findings") or []))[:600]
     fix = str(verdict.get("fix_description") or "")[:200]
+    lane_txt = APP_LABEL if not eng_lane else f"{APP_LABEL} + {eng_label}"
     message = (
         f"brain({sid}): {fix}\n\n"
         f"Auto-fix from test session {sid} via the playvibe brain workflow.\n"
@@ -1563,7 +1700,7 @@ async def pv_apply(
         f"{metrics.get('wire')} wire, booms {metrics.get('booms')}, "
         f"mid-turn loads {len(metrics.get('midTurnLoads') or [])}, "
         f"pump stalls {len(metrics.get('pumpStalls') or [])}.\n"
-        f"Lane: {APP_LABEL} only (testmode read-only; engine/net untouched); {VER_LABEL} {cur} -> {nxt}.\n"
+        f"Lane: {lane_txt} (testmode read-only; net untouched); {VER_LABEL} {cur} -> {nxt}.\n"
         f"Files: {', '.join(changed)}. Edits: {applied} exact-string replacement(s)."
     )
 
@@ -1882,6 +2019,17 @@ async def pv_fetch_sources() -> dict[str, Any]:
                 d = r.json()
                 srcs[name] = base64.b64decode(d.get("content", "")).decode("utf-8")
                 shas[name] = str(d.get("sha") or "") or ""
+        # v4.18: the optional engine lane fetches EDITABLE on the revert
+        # path too (fail-open: absent = no engine lane)
+        if ENG_PATH:
+            try:
+                r = await c.get(f"{GITHUB}/{REPO}/contents/{ENG_PATH}?ref=main", headers=_gh_headers(tok))
+                if r.status_code == 200:
+                    d = r.json()
+                    srcs[ENG_LABEL] = base64.b64decode(d.get("content", "")).decode("utf-8")
+                    shas[ENG_LABEL] = str(d.get("sha") or "") or ""
+            except Exception:
+                pass
         # v4.13: only the editable app file + version bump spot are
         # REQUIRED; the panel read-only context may be absent (a game
         # that installs the playvibe package has no src/testmode in-repo)
@@ -1894,6 +2042,10 @@ async def pv_fetch_sources() -> dict[str, Any]:
             "panel_sha": shas.get("TestPanel.tsx") or "",
             "ver_src": srcs[VER_LABEL],
             "ver_sha": shas[VER_LABEL],
+            # v4.18: the engine lane for the revert path
+            "eng_src": srcs.get(ENG_LABEL) or None,
+            "eng_sha": shas.get(ENG_LABEL) or None,
+            "eng_label": ENG_LABEL or None,
             "has_token": True,
         }
 
@@ -2141,6 +2293,8 @@ class BrainWorkflow:
             context_md=fetched.get("context_md"),
             qa_block=qa_block,
             ro_block=ro_block,
+            eng_src=fetched.get("eng_src"),
+            eng_label=fetched.get("eng_label"),
         )
         # PHASE 2 — the model SOLVES the fix inside its
         # reasoning field but the guided-JSON schema makes it commit
@@ -2157,6 +2311,8 @@ class BrainWorkflow:
                 None,
                 context_md=fetched.get("context_md"),
                 transcript=str(fetched.get("transcript") or ""),
+                eng_src=fetched.get("eng_src"),
+                eng_label=fetched.get("eng_label"),
             )
             verdict = verdict.model_copy(update={"edits": list(el.edits or [])})
 
@@ -2191,9 +2347,9 @@ class BrainWorkflow:
             if prior is not None:
                 choice = str(prior.get("choice") or "").strip()[:80]
                 note = (
-                    "engine-side finding recorded — the player already answered (choice: "
+                    "game-logic finding recorded — the player already answered (choice: "
                     + (choice or "?")
-                    + "); the dev agent owns this lane"
+                    + "); the finding stands as recorded"
                 )[:200]
                 await pv_stage(sid, "done", note)
                 await pv_report(sid, {
@@ -2204,7 +2360,7 @@ class BrainWorkflow:
                     **ctx_fields,
                 })
                 if not data.dry_run:
-                    await pv_notify(NOTIFY_TITLE, f"Engine-side finding recorded ({short}) — the player's choice is in the report; the dev agent owns it.", NOTIFY_TAG)
+                    await pv_notify(NOTIFY_TITLE, f"Game-logic finding recorded ({short}) — the player's choice is in the report; it stands as recorded.", NOTIFY_TAG)
                     # the answered ask is superseded by this conclusion
                     await pv_qa_prune([])
                     return BrainResult(sid=sid, stage="done", note=note, classification="game_logic", findings=findings)
@@ -2292,10 +2448,13 @@ class BrainWorkflow:
                         dict(outcome, gate_history=gate_history),
                         fetched["app_src"],
                         fetched.get("panel_src"),
+                        _eng_pair(fetched),
                     ),
                     context_md=fetched.get("context_md"),
                     qa_block=qa_block,
                     ro_block=ro_block,
+                    eng_src=fetched.get("eng_src"),
+                    eng_label=fetched.get("eng_label"),
                 )
                 if verdict_r.classification != "app_fix":
                     break
@@ -2308,6 +2467,8 @@ class BrainWorkflow:
                         None,
                         context_md=fetched.get("context_md"),
                         transcript=str(fetched.get("transcript") or ""),
+                        eng_src=fetched.get("eng_src"),
+                        eng_label=fetched.get("eng_label"),
                     )
                     verdict_used = verdict_used.model_copy(update={"edits": list(el.edits or [])})
             else:
@@ -2319,9 +2480,12 @@ class BrainWorkflow:
                         dict(outcome, gate_history=gate_history),
                         fetched["app_src"],
                         fetched.get("panel_src"),
+                        _eng_pair(fetched),
                     ),
                     context_md=fetched.get("context_md"),
                     transcript=str(fetched.get("transcript") or ""),
+                    eng_src=fetched.get("eng_src"),
+                    eng_label=fetched.get("eng_label"),
                 )
                 verdict_used = verdict_used.model_copy(update={"edits": list(el.edits or [])})
             retried = True
@@ -2477,15 +2641,6 @@ class BrainWorkflow:
             }
             for ed in reversed(edits)
         ]
-        # v4.9.2: the editable lane is App.tsx only — a stored fix entry
-        # whose edits touch the testmode cannot be reverted by the brain
-        # (the panel is maintained by the dev agents); refuse honestly
-        if any(str(ed.get("file") or APP_LABEL) != APP_LABEL for ed in inverted):
-            note = f"revert not possible: fix {fix_id} touches the test panel (read-only)"[:200]
-            await pv_stage(sid, "done", note, pushed=False)
-            if not data.dry_run:
-                await pv_notify(NOTIFY_TITLE, note, NOTIFY_TAG)
-            return BrainResult(sid=sid, stage="done", note=note, classification="revert", findings=[])
         verdict_r = {
             "classification": "app_fix",
             "fix_description": f"revert: {desc}"[:120],
@@ -2509,6 +2664,21 @@ class BrainWorkflow:
             reason = (str(e) or type(e).__name__ or "unknown error")[:120]
             await pv_stage(sid, "error", f"source fetch failed: {reason}")
             raise
+        # v4.9.2 -> v4.18: the lane check is DATA-DRIVEN — the editable
+        # labels come from the fetched sources (the workflow body's module
+        # globals never saw the manifest), so a stored fix entry may touch
+        # the manifest's app file and its engine file; every other lane
+        # (the test panel, the net module) is refused honestly
+        allowed_r = {APP_LABEL}
+        el = str(fetched.get("eng_label") or "")
+        if el and fetched.get("eng_src"):
+            allowed_r.add(el)
+        if any(str(ed.get("file") or APP_LABEL) not in allowed_r for ed in inverted):
+            note = f"revert not possible: fix {fix_id} touches a read-only file (editable: {', '.join(sorted(allowed_r))})"[:200]
+            await pv_stage(sid, "done", note, pushed=False)
+            if not data.dry_run:
+                await pv_notify(NOTIFY_TITLE, note, NOTIFY_TAG)
+            return BrainResult(sid=sid, stage="done", note=note, classification="revert", findings=[])
         pre_url = await pv_live_url_activity()
         outcome = await pv_apply(sid, fetched, verdict_r, rm, data.dry_run)
         pushed = bool(outcome.get("ok"))
