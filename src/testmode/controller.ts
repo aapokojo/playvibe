@@ -145,9 +145,20 @@ export function useTestController(cfg: TestControllerCfg) {
       s.mix = new AudioContext();
       const dest = s.mix.createMediaStreamDestination();
       s.mix.createMediaStreamSource(s.stream).connect(dest);
-      const engStream = engRef.current?.audioTap();
-      if (engStream) s.mix.createMediaStreamSource(engStream).connect(dest);
-      else s.noAudio = "engine-audio-off";
+      /* The engine's SFX bus is the GAME's contribution, not the mic's: a
+         game without audio (or one whose audioTap throws) must never poison
+         the mic lane. The aapocalypse port shipped without the method and
+         every session recorded mic-less, mislabeled as "mic-failed". The
+         optional ?.audioTap?.() makes a missing method an honest
+         engine-audio-off; a throwing one gets its own reason string. */
+      let engStream: MediaStream | null = null;
+      try {
+        engStream = engRef.current?.audioTap?.() ?? null;
+        if (engStream) s.mix.createMediaStreamSource(engStream).connect(dest);
+        else s.noAudio = "engine-audio-off";
+      } catch (ee) {
+        s.noAudio = `engine-audio-failed: ${ee instanceof Error ? ee.message : "?"}`;
+      }
       // iOS Safari claims audio/webm;codecs=opus support and records
       // it, but its own decodeAudioData cannot decode opus-in-webm — the
       // whole encode then falls back to a raw webm that the analyzing
