@@ -66,6 +66,30 @@ Mistral (the workflow deployment named in the manifest's
 provider (Claude, ChatGPT) means implementing the same contract behind
 the same routes; the panel, the queue and the ledger do not change.
 
+## The vision lane (brain >= v4.19): the brain interprets your snapshots
+
+The session recorder captures throttled canvas JPEGs (data URLs) as
+`snapshots[]: [{tag, ms, data}]` in the session JSON — pass your
+`canvasRef` to `useTestController` and you get them automatically. The
+brain does the rest with zero contract on your side:
+
+- It reads up to 6 evenly-spaced frames per run (first and last always
+  kept; frames larger than ~400 KB skipped) and shows them, as data
+  URLs, to a vision-capable model.
+- The model's plain-text descriptions ride the verdict prompt as the
+  SNAPSHOT OBSERVATIONS block, labeled ground truth for what was on
+  the player's screen — the narration loses ties against it.
+- Fail-open by design: no canvas, no snapshots, oversized frames or a
+  vision failure degrade the run to text-only. Nothing breaks; the
+  report records `vision: false` so degraded runs stay visible.
+
+One thing only YOUR repo can add: the visual vocabulary in your
+AGENT-CONTEXT.md — what the character looks like, the palette, what a
+healthy frame shows, which events capture frames. The vision model
+describes pixels; the context file tells the brain (and its verdict)
+what those pixels mean in your game. Without it the lane still works,
+but the descriptions arrive uninterpreted.
+
 ## What a game must provide
 
 - **A manifest**: every game-specific value (API routes, storage key
