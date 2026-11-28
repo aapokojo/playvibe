@@ -411,36 +411,24 @@ def verdict_prompt(
 
 
 def snapshot_block(sight: dict) -> str:
-    """v4.19 vision lane: render the sight model's frame descriptions into
-    the verdict prompt. `sight` is pv_sight's result; its frames are what a
-    vision model SAW in the session's real canvas snapshots, so they are
-    ground truth for what was on the player's screen. Empty or malformed
-    sight renders "" so the verdict prompt is untouched on fail-open."""
+    """v4.19 vision lane: render the sight model's plain-text frame
+    descriptions into the verdict prompt. `sight` is pv_sight's result;
+    its text is what a vision model SAW in the session's real canvas
+    snapshots (per-frame FRAME lines + a SUMMARY line), so it is ground
+    truth for what was on the player's screen. Empty or missing sight
+    renders "" so the verdict prompt is untouched on fail-open."""
     if not isinstance(sight, dict):
         return ""
-    frames = sight.get("frames")
-    if not isinstance(frames, list):
+    text = str(sight.get("text") or "").strip()
+    if not text:
         return ""
-    lines = [
-        "SNAPSHOT OBSERVATIONS (a vision model described the recorded canvas",
-        "frames; this is ground truth for what was on the player's screen —",
-        "when these and the narration disagree, these WIN):",
-    ]
-    for f in frames:
-        if not isinstance(f, dict):
-            continue
-        desc = str(f.get("desc") or "").strip()
-        if not desc:
-            continue
-        tag = str(f.get("tag") or "?")
-        ms = f.get("ms")
-        lines.append(f"- [{tag} @ {ms}ms] {desc}")
-    summary = str(sight.get("summary") or "").strip()
-    if summary:
-        lines.append(f"Overall: {summary}")
-    if len(lines) <= 3:
-        return ""
-    return "\n".join(lines) + "\n"
+    return (
+        "SNAPSHOT OBSERVATIONS (a vision model described the recorded canvas\n"
+        "frames; this is ground truth for what was on the player's screen —\n"
+        "when these and the narration disagree, these WIN):\n"
+        + text
+        + "\n"
+    )
 
 
 def edits_prompt(

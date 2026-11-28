@@ -308,6 +308,7 @@ VERDICT_MODEL = "mistral-medium-latest"
 SIGHT_MODEL = "mistral-small-latest"
 SIGHT_MAX = 6  # frames shown per run (even-spaced; first + last kept)
 SIGHT_MAX_IMG_CHARS = 400_000  # skip frames larger than this
+SIGHT_MAX_TEXT = 4_000  # hard cap on the sight text reaching the verdict prompt
 MAX_PARTS = 64
 FIXLOG_KEY = "fixlog"  # the player-visible fix log (broker)
 QUEUE_ADVANCE = ""  # the analysis-queue advance route (manifest routes.fixes)
@@ -581,23 +582,6 @@ class TargetCheck(BaseModel):
     would have been flagged here."""
     on_target: bool
     why: str = ""
-
-
-class FrameDesc(BaseModel):
-    """v4.19 vision lane: one described canvas frame."""
-    tag: str = ""
-    ms: int = 0
-    desc: str = ""
-
-
-class SightOut(BaseModel):
-    """v4.19 vision lane: pv_sight's structured output — one description
-    per shown frame plus an overall summary. The frames are what a vision
-    model SAW in the session's real canvas snapshots (ground truth for
-    what was on the player's screen); until v4.19 the analysis only ever
-    met their counts and tags."""
-    frames: list[FrameDesc] = []
-    summary: str = ""
 
 
 class BrainResult(BaseModel):
@@ -1429,7 +1413,7 @@ async def pv_sight(
     from mistralai.workflows.plugins.mistralai import (
         ChatCompletionRequest,
         UserMessage,
-        chat_parse_to_model,
+        mistralai_chat_complete,
     )
 
     clean: list[dict[str, Any]] = []
@@ -1447,7 +1431,7 @@ async def pv_sight(
             ms = 0
         clean.append({"tag": str(s.get("tag") or "?")[:24], "ms": ms, "data": d})
     if not clean:
-        return {"frames": [], "summary": "", "seen": 0}
+        return {"text": "", "seen": 0}
     if len(clean) > SIGHT_MAX:
         # even spacing over the session; first + last always kept
         pick: list[int] = []
@@ -1462,13 +1446,14 @@ async def pv_sight(
             "type": "text",
             "text": (
                 "These are frames captured from a game during a recorded "
-                "test session, in time order. For EACH frame describe "
-                "factually what is on screen: the character's position "
-                "relative to the visible area and obstacles, anything "
-                "overlapping or clipping, UI elements, anything broken or "
-                "misplaced. Keep each frame description to 2-3 short "
-                "sentences. Then give a short overall summary. Be concrete "
-                "and visual; do not speculate about code."
+                "test session, in time order. For EACH frame, on its own "
+                "line starting 'FRAME <tag> @ <ms>ms:', describe factually "
+                "what is on screen: the character's position relative to "
+                "the visible area and obstacles, anything overlapping or "
+                "clipping, UI elements, anything broken or misplaced. "
+                "Keep each frame to 2-3 short sentences. Finish with a "
+                "line starting 'SUMMARY:' giving a short overall summary. "
+                "Be concrete and visual; do not speculate about code."
             ),
         }
     ]
@@ -1479,22 +1464,22 @@ async def pv_sight(
         model=SIGHT_MODEL,
         messages=[UserMessage(content=parts)],
         temperature=0,
-        # generous on purpose: the first v4.19 test truncated the guided
-        # JSON mid-string at max_tokens=1200 (EOF at ~6.5 KB of output,
-        # pydantic json_invalid) — 6 frames need more than that.
-        max_tokens=3000,
+        max_tokens=2500,
     )
-    out: SightOut = await chat_parse_to_model(SightOut, req)
-    frames = [
-        {"tag": f.tag, "ms": f.ms, "desc": (f.desc or "")[:400]}
-        for f in (out.frames or [])
-        if (f.desc or "").strip()
-    ]
-    return {
-        "frames": frames,
-        "summary": (out.summary or "")[:800],
-        "seen": len(clean),
-    }
+    # v4.19.1: PLAIN TEXT, not guided JSON. The first two live tests
+    # proved the lane works (the vision model received the frames and
+    # described them) but the model writes until the token cap, so a
+    # guided-JSON completion truncates mid-string and pydantic rejects
+    # it (EOF at 6.5 KB with max_tokens=1200, 16 KB with 3000 — the
+    # output length tracks the cap exactly). A plain completion makes
+    # truncation HARMLESS: the text is cut mid-sentence at worst, and
+    # the hard cap below bounds what reaches the verdict prompt.
+    res = await mistralai_chat_complete(req)
+    try:
+        txt = str(res.choices[0].message.content or "")
+    except (AttributeError, IndexError, TypeError):
+        txt = ""
+    return {"text": txt.strip()[:SIGHT_MAX_TEXT], "seen": len(clean)}
 
 
 @workflows.activity(
@@ -2532,7 +2517,7 @@ class BrainWorkflow:
         except Exception:
             sight = {}
         snap_block = snapshot_block(sight)
-        ctx_fields["vision"] = bool(sight.get("frames"))
+        ctx_fields["vision"] = bool(sight.get("text"))
         ctx_fields["snapshot_frames_seen"] = int(sight.get("seen") or 0)
         verdict = await pv_verdict(
             metrics,
