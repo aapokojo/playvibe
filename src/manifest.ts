@@ -82,6 +82,14 @@ export interface PlayvibeRoutes {
       body, url, tag}). Brain-facing; the panel never calls it */
   notify: string;
 }
+  /** v0.9.2: OPTIONAL deployment-status lane. POST is the game's
+      Vercel deployment-webhook receiver (x-vercel-signature
+      HMAC-verified against the env var env.deployHookSecret names);
+      GET serves the same deploy-history doc for this panel's DEPLOY
+      band (30 s poll). A game without the lane omits the field: no
+      band renders, nothing else changes. */
+  deploys?: string;
+}
 
 export interface PlayvibeStorageKeys {
   /** session-scoped debug pin (cleared on PWA restart by design) */
@@ -97,6 +105,11 @@ export interface PlayvibeEnv {
   signKey: string;
   debugPin: string;
 }
+  /** v0.9.2: OPTIONAL env var NAME holding the Vercel deployment-webhook
+      secret (Team Settings → Webhooks). Documentation only — nothing
+      in this package reads the VALUE; the game's own receiver does. */
+  deployHookSecret?: string;
+}
 
 export interface PlayvibeStorePrefixes {
   /** session JSON docs: <prefix><sid> */
@@ -110,6 +123,11 @@ export interface PlayvibeStorePrefixes {
   report: string;
   /** brain public work-state doc (unguessable suffix = the gate) */
   brainState: string;
+}
+  /** v0.9.2: OPTIONAL deploy-history doc key — the receiver appends
+      (newest last, capped) through the store; omit when the game has
+      no deploy webhook lane */
+  deploys?: string;
 }
 
 /* ---- v0.7.0: the brain section + the analysis vocabulary ---- */
@@ -266,10 +284,11 @@ export const EXAMPLE_MANIFEST: PlayvibeManifestSeed = {
     debug: "/api/pv-debug",
     broker: "/api/pv-broker",
     notify: "/api/pv-notify",
+    deploys: "/api/pv-deploys",
   },
   storageKeys: { debugPin: "pv-debug-pin", kickTok: "pv-kick-tok" },
-  env: { agentToken: "PV_AGENT_TOKEN", githubToken: "PV_GITHUB_TOKEN", signKey: "PV_SIGN_KEY", debugPin: "PV_DEBUG_PIN" },
-  storePrefixes: { session: "pvsess-", transcript: "pvtrans-", audio: "pvaud-", report: "pvreport-", brainState: "pvbrain-state-<unguessable-suffix>" },
+  env: { agentToken: "PV_AGENT_TOKEN", githubToken: "PV_GITHUB_TOKEN", signKey: "PV_SIGN_KEY", debugPin: "PV_DEBUG_PIN", deployHookSecret: "PV_DEPLOY_HOOK_SECRET" },
+  storePrefixes: { session: "pvsess-", transcript: "pvtrans-", audio: "pvaud-", report: "pvreport-", brainState: "pvbrain-state-<unguessable-suffix>", deploys: "pvdeploys" },
   contextFile: "AGENT-CONTEXT.md",
   version: "v0.0.0",
   brain: {

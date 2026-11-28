@@ -52,6 +52,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from "react";
    panel, so the host game's prop surface is untouched. */
 import { dequeueItem, pollFixes, queueAnalysis, requestRevert, type FixesData } from "./fixes";
 import { pv } from "../cfg";
+import { pollDeploys, newestFirst, type DeploysDoc } from "./deploys";
 import { QAInput } from "./QAInput";
 
 /* the emoji bell glyph overflows a tiny button on the phone
@@ -194,6 +195,30 @@ export function TestPanel({
     };
     fxRefreshRef.current = () => {
       tick();
+    };
+    tick();
+    const t = setInterval(tick, 30000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+
+  /* DEPLOY — the Vercel deployment-status lane (v0.9.2): when the
+     manifest declares routes.deploys, poll it every 30 s like FIXES
+     and render one line with the latest deploy of THIS game. No
+     route, no poll, no band (older games change nothing). */
+  const [dp, setDp] = useState<DeploysDoc | null>(null);
+  useEffect(() => {
+    if (!pv().routes.deploys) return;
+    let alive = true;
+    let busy = false;
+    const tick = async () => {
+      if (busy) return;
+      busy = true;
+      const d = await pollDeploys();
+      if (alive && d) setDp(d);
+      busy = false;
     };
     tick();
     const t = setInterval(tick, 30000);
@@ -464,6 +489,29 @@ export function TestPanel({
                 )}
               </div>
             ) : null}
+            {/* DEPLOY — the latest Vercel deployment of THIS game, one
+                line: state, short sha, target, relative age. A failed
+                deploy renders magenta so a broken ship reads instantly
+                (the same color the REC lane reserves for failure).
+                Renders only when the manifest declares routes.deploys
+                and at least one deploy has landed. */}
+            {dp && (() => {
+              const list = newestFirst(dp);
+              const d = list[0];
+              if (!d) return null;
+              const bad = /ERROR|FAILED|CANCELED/i.test(d.state) || /error|failed|canceled|cancelled/i.test(d.event || "");
+              const age = Math.max(0, Math.round((Date.now() - (d.ts || 0)) / 60000));
+              return (
+              <div className="mt-1.5 border-t border-[#8a3fd9]/50 pt-1">
+                <div className="mb-1 font-bold text-[#00f0ff]">DEPLOY</div>
+                <div className={`break-words leading-snug ${bad ? "text-[#ff2fd6]" : "text-[#b08cd8]"}`}>
+                  {bad ? "✗" : "✓"} {d.state}
+                  {d.sha ? ` · ${d.sha}` : ""}
+                  {d.target ? ` · ${d.target}` : ""} · {age < 1 ? "just now" : `${age} min ago`}
+                </div>
+              </div>
+              );
+            })()}
             {/* QUEUE — the analysis queue: queue several narrated
                 sessions; exactly one brain run is ever in flight.
                 Player spec: ONLY WAITING ROWS render here — live
