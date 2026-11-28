@@ -281,6 +281,15 @@ export const EXAMPLE_MANIFEST: PlayvibeManifestSeed = {
     notifyTag: "pv-analysis",
     versionScheme: "vNN-patch",
     liveVerify: "bundle-filename",
+    /* v4.15: full-codebase read context — the brain fetches the WHOLE
+       repo (one tarball of main) into its prompt as read-only context:
+       noise and secret-bearing files filtered, 60 KB/file and
+       brain.contextMaxKB caps (default 350), code directories spent
+       first. contextExclude skips game-specific asset/noise paths.
+       Edit rights are unchanged: appPath stays the only editable
+       file and target_evidence must still quote it alone. */
+    fullContext: true,
+    contextExclude: ["assets-src", "public/audio"],
   },
   analysis: { keyEvents: ["levelup"], heartbeat: ["push-live"] },
 };

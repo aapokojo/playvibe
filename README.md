@@ -142,7 +142,10 @@ export const GAME_MANIFEST: PlayvibeManifestSeed = {
   brain: { origin: "https://my-game.example", appPath: "src/App.tsx",
            versionPath: "src/version.ts", readOnlyPaths: [],
            fixlogKey: "myfixlog", notifyTag: "my-analysis",
-           versionScheme: "vNN-patch", liveVerify: "bundle-filename" },
+           versionScheme: "vNN-patch", liveVerify: "bundle-filename",
+           /* v4.15: full-codebase read context (whole repo read-only,
+              filtered + capped; edit rights unchanged) */
+           fullContext: true },
   analysis: { keyEvents: ["levelup"], heartbeat: ["push-live"] },
 };
 ```
