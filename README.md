@@ -340,3 +340,85 @@ every lane, no exceptions.
   happened). The apply gate is untouched: full sight, unchanged edit
   rights — only `brain.appPath` stays editable and `target_evidence`
   must still quote it alone.
+
+## The game-side serving checklist (hard-won in the first integration)
+
+The manifest tells the brain every URL; these are the RESPONSE SHAPES the
+game must actually serve on them. The gotchas below each cost real
+debugging time in the first integration (aapocalypse-web, Nov 2026);
+wire them right the first time.
+
+### The polled GET lanes (the panel reads these every 5-30 s)
+
+- `routes.state`: `{current: {sid, stage, note, ts, pushed}}`. The
+  brain writes a `{v: 1, current, history}` envelope and your own
+  mirrors may write flat entries: normalize BOTH when reading. Stage
+  vocabulary: `analyzing`, `fixing`, `waiting`, `reverting`, `done`,
+  plus the display-only `answered`. A done note that names its version
+  in parentheses, like "fix live (v1.7)", feeds the note-based LOAD NEW
+  VERSION gate.
+- `routes.fixes`: THE shared change ledger, `{v: 1, fixes: [...]}`,
+  newest LAST, entry
+  `{id, version, desc, sid?, sha?, ts, edits?: [{file, old, new}], live?}`.
+  Two kinds of writers: the BRAIN (entries carry `sid` + `edits` and are
+  revertable through the stored edit pairs) and DEV-LANE deploy records
+  (no `sid`, no `edits`, `live: true`: they document, they can never be
+  reverted). Every lane that ships a version should ledger itself or
+  the FIXES band lies about what is live. Teach the brain the
+  difference in your context file (never revert a no-edits entry; a
+  revert attempt must fail named rather than guess).
+- `routes.agentqa`: ask / answer / consume / prune / dismiss actions
+  over two store docs (questions, answers). First answer per question
+  id is a good auto-trigger for the consuming analysis.
+- `routes.version` (v0.9.4+): `{version: "vN.N"}` — the served-version
+  reload gate. Strictly newer than the running badge wins (numeric
+  segment compare), which covers EVERY lane: brain fixes AND
+  pushes from chat/dev that never write the state doc. Without this
+  route, only the note-based gate exists and dev-lane changes are
+  invisible to an open panel.
+- `routes.deploys` (v0.9.2+): `{v: 1, deploys: [...]}`, newest last,
+  `{id, state, event?, url?, target?, sha?, ref?, ts}` — the DEPLOY band.
+
+### The deployment-webhook receiver (routes.deploys POST)
+
+- Vercel signs `x-vercel-signature` as **HMAC-SHA1, hex, over the RAW
+  body** with the webhook secret — NOT SHA-256. A wrong digest makes
+  every delivery fail 401 while the whole pipeline looks configured;
+  this is the single most expensive mistake available here. Turn the
+  route's body parser OFF: the signature is computed over raw bytes, a
+  re-serialized parsed body is not byte-guaranteed.
+- Payload shape: `payload.deployment.{id, url, meta}` plus
+  `payload.target` and `payload.state`; commit data in
+  `meta.githubCommitSha` / `githubCommitRef` / `githubCommitMessage`.
+  `target === null` means a PREVIEW deployment (normalize before
+  deciding "production").
+- Idempotency: Vercel RETRIES failed deliveries and flushes the backlog
+  once your receiver starts accepting. Dedupe on id+state+event, cap
+  the doc, and answer 200 even when side effects fail.
+- The promotion race: platform env-var changes apply only to
+  deployments built AFTER them, and a deployment's own events can be
+  served by the PREVIOUS build. Never label a ledger entry by "what is
+  running now" alone: match the event's sha against the function's own
+  `VERCEL_GIT_COMMIT_SHA` first and fail closed on mismatch.
+- Push for non-brain successes: when a succeeded production deploy's
+  sha is not claimed by a fixlog entry, send the "new build is live"
+  push (the brain announces its own fixes with detail; the claim check
+  is a prefix compare — fixlog shas are longer than the webhook's
+  7-char short sha).
+
+### Display-only state overrides
+
+The brain owns the state doc; the game NEVER writes display changes
+into it. Two proven read-time patterns: the `answered` override (a
+stored answer reported as the stage while the doc still says waiting)
+and the staleness suffix (a terminal note annotated with the newest
+ledger version when dev-lane changes shipped since it). Both compute
+per GET, from the store, and vanish under the brain's next stage
+write.
+
+### Env vars
+
+The manifest's `env` section carries env var NAMES only; the values
+live in the platform. Routes without their env var answer an honest
+503/401 naming the missing variable — wire that pattern everywhere, it
+turns configuration gaps into self-describing failures.
