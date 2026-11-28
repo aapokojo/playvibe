@@ -1,6 +1,6 @@
 {
   "name": "playvibe",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Game-agnostic player-oversight agent surface for web games: test-mode panel with narration recorder, wire funnel, analysis queue, change ledger (FIXES) and agent inbox. Context manifest required at init; brain contract is provider-neutral (currently configured to Mistral).",
   "repository": {
     "type": "git",
