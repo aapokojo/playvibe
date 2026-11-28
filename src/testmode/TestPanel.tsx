@@ -114,6 +114,9 @@ export interface TestPanelProps {
   agentWork: { sid: string; stage: string; note: string; ts: number; pushed?: boolean | null } | null;
   qaList: { id: string; text: string; opts: string[]; ts: number }[];
   qaAnswer: (id: string, choice: string) => Promise<void>;
+  /* v0.9.3: optional per-ask dismiss (the player retires an obsolete
+     ask); when absent the panel simply renders no dismiss control */
+  qaDismiss?: (id: string) => Promise<void>;
   /* LOAD NEW VERSION gate; verBadgeRef spans the badge below */
   reloadReady: boolean;
   verBadgeRef: MutableRefObject<HTMLSpanElement | null>;
@@ -154,6 +157,7 @@ export function TestPanel({
   agentWork,
   qaList,
   qaAnswer,
+  qaDismiss,
   reloadReady,
   verBadgeRef,
   pushOn,
@@ -404,7 +408,20 @@ export function TestPanel({
                   <div className="mb-1 font-bold text-[#00f0ff]">AGENT ASKS</div>
                   {qaList.map((q) => (
                     <div key={q.id} className="mb-2">
-                      <div className="mb-1 leading-snug text-[#f2f0ff]">{q.text}</div>
+                      <div className="mb-1 flex items-start justify-between gap-1 leading-snug text-[#f2f0ff]">
+                        {q.text}
+                        {qaDismiss && (
+                          <button
+                            onClick={() => {
+                              qaDismiss(q.id).catch(() => {});
+                            }}
+                            className="shrink-0 rounded border border-[#8a3fd9] px-1 leading-none text-[#8a3fd9] transition-transform hover:-translate-y-0.5"
+                            title="remove this ask (obsolete or already resolved)"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
                       <div className="flex flex-col gap-1">
                         {q.opts.map((o) => (
                           <button

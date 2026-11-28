@@ -151,6 +151,17 @@ v4.15 (full-codebase read context): a game may declare
   apply gate is UNTOUCHED: full sight, unchanged edit rights — only the
   manifest's appPath stays editable and target_evidence still must
   quote it alone.
+
+v4.16 (ask inbox hygiene): after a live verdict the brain PRUNES the
+  player's ask inbox (agentqa action "prune", keep=[the id this run
+  just asked, if any]): a clean/app_fix verdict resolves or supersedes
+  every open ask (keep=[]), a game_logic verdict keeps exactly its own
+  fresh question. Superseded asks from earlier analyses — and any
+  answer still pointing at a removed question — are deleted, so the
+  inbox always reflects the CURRENT analysis alone and a stale answer
+  can never steer a future verdict. Fail-soft: a prune problem never
+  kills the run. The panel also gains a per-ask dismiss (player lane,
+  package-side, rides the next publish).
 """
 
 import json
@@ -1735,6 +1746,35 @@ async def pv_qa_consume() -> dict[str, Any]:
 
 
 @workflows.activity(
+    name="pv-qa-prune",
+    start_to_close_timeout=timedelta(seconds=30),
+    retry_policy_max_attempts=2,
+)
+async def pv_qa_prune(keep: list[str] | None = None) -> dict[str, Any]:
+    """v4.16: retire superseded asks after a live verdict (agentqa
+    action "prune"). The player's inbox must reflect the CURRENT
+    analysis alone: kept are only the ids this run just asked (if any);
+    every question from earlier analyses — and any answer still
+    pointing at a removed question — goes with them, so a stale ask
+    can never linger and a stale answer can never steer a future
+    verdict. Fail-soft: a prune problem never kills the run."""
+    import httpx
+
+    tok = _env("agentToken")
+    if not tok:
+        return {"ok": False, "reason": "agent token missing"}
+    try:
+        async with httpx.AsyncClient(timeout=30, headers=_PV_UA, follow_redirects=True) as c:
+            r = await c.post(
+                QA_URL,
+                json={"action": "prune", "token": tok, "keep": [str(k) for k in (keep or [])][:8]},
+            )
+            return {"ok": r.status_code == 200, "status": r.status_code}
+    except Exception as e:
+        return {"ok": False, "reason": str(e)[:120]}
+
+
+@workflows.activity(
     name="pv-report",
     start_to_close_timeout=timedelta(seconds=30),
     retry_policy_max_attempts=2,
@@ -2123,6 +2163,8 @@ class BrainWorkflow:
             })
             if not data.dry_run:
                 await pv_notify(NOTIFY_TITLE, f"Analysis done ({short}): everything as designed.", NOTIFY_TAG)
+                # v4.16: a clean verdict resolves/supersedes every open ask
+                await pv_qa_prune([])
                 return BrainResult(sid=sid, stage="done", note=note, classification="clean", findings=findings)
             return BrainResult(sid=sid, stage="done", note=note + " [dry]", classification="clean", findings=findings)
 
@@ -2140,6 +2182,8 @@ class BrainWorkflow:
             if not data.dry_run:
                 await pv_notify(NOTIFY_TITLE, "The analysis found something that would change the game: answer the question in the test panel.", NOTIFY_TAG)
                 await pv_ask(f"{sid}-q", question, opts)
+                # v4.16: this run's fresh question replaces every superseded ask
+                await pv_qa_prune([f"{sid}-q"])
                 return BrainResult(sid=sid, stage="waiting", note=note, classification="game_logic", findings=findings)
             return BrainResult(sid=sid, stage="waiting", note=note + " [dry]", classification="game_logic", findings=findings)
 
@@ -2326,6 +2370,8 @@ class BrainWorkflow:
                     await pv_notify(NOTIFY_TITLE, f"New version {new_version} live: {fix}", NOTIFY_TAG)
                 else:
                     await pv_notify(NOTIFY_TITLE, f"Fix pushed ({new_version}) but the deploy did NOT confirm: probable build failure: revert it with the REVERT button; main needs healing.", NOTIFY_TAG)
+                # v4.16: a landed fix resolves/supersedes every open ask
+                await pv_qa_prune([])
             return BrainResult(sid=sid, stage="done", note=note, classification="app_fix", findings=findings, pushed=True, verified=verified, new_version=str(new_version), on_target=on_target)
         # push did not happen: name the gate failure honestly
         reason = str(outcome.get("reason") or "?")
@@ -2348,6 +2394,8 @@ class BrainWorkflow:
         })
         if not data.dry_run:
             await pv_notify(NOTIFY_TITLE, f"The analysis found a bug but the auto-fix did not land: {reason}", NOTIFY_TAG)
+            # v4.16: the verdict still supersedes the older asks
+            await pv_qa_prune([])
         return BrainResult(sid=sid, stage="done", note=note, classification="app_fix", findings=findings)
 
 

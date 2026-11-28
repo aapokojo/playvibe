@@ -640,6 +640,26 @@ export function useTestAgent(cfg: TestAgentCfg) {
       pushFlash("answer did not reach the server - try again");
     }
   };
+  /* v0.9.3: retire an ask the player considers obsolete (dismiss is a
+     player lane, anonymous like answering — an ask is advisory UI and
+     its stored answer goes with it server-side). Optimistic removal;
+     the agentqa poll loop restores the ask if the server still has
+     it, so the route's truth always wins. The brain also prunes
+     superseded asks itself after every live verdict (v4.16). */
+  const qaDismiss = async (id: string) => {
+    setQaList((l) => l.filter((q) => q.id !== id));
+    try {
+      const r = await fetch(pvRoute("agentqa"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "dismiss", id }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      pushFlash("ask removed");
+    } catch {
+      pushFlash("ask not removed - try again");
+    }
+  };
 
   return {
     qaList,
@@ -653,5 +673,6 @@ export function useTestAgent(cfg: TestAgentCfg) {
     lastKickRef,
     kickAfterPinRef,
     qaAnswer,
+    qaDismiss,
   };
 }
